@@ -1,0 +1,46 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5.0.0
+
+      # one invocation: separate ones report a false SC1091 on the sourced tests/image.sh
+      - run: >
+          shellcheck -s dash
+          luci-app-podkop-sub/root/usr/bin/podkop-sub
+          luci-app-podkop-sub/root/etc/init.d/podkop-sub
+          luci-app-podkop-sub/root/etc/uci-defaults/50_podkop-sub
+          install.sh uninstall.sh build.sh tests/*.sh
+          tests/mock/usr/bin/podkop tests/mock/usr/bin/curl tests/mock/usr/bin/wget
+          tests/mock/etc/init.d/podkop
+
+  tests:
+    name: tests on OpenWrt ${{ matrix.openwrt }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        openwrt: ['24.10.8', '25.12.4']
+    steps:
+      - uses: actions/checkout@v5.0.0
+
+      # x86_64 runner, so tests/image.sh pulls the stand by tag and nothing is emulated;
+      # test_package.sh skips itself because dist/ is empty here
+      - run: sh tests/run.sh
+        env:
+          OPENWRT_VERSION: ${{ matrix.openwrt }}

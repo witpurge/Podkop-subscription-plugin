@@ -1,0 +1,4 @@
+config settings 'settings'
+	option check_interval '60'
+	option ping_timeout '2000'
+	option max_failures '5'

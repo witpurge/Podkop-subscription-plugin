@@ -1,0 +1,30 @@
+# Dev stand image: the test stand plus podkop's release packages and LuCI.
+ARG BASE=podkop-sub-test:latest
+FROM ${BASE}
+ARG PODKOP_VERSION=0.7.22
+
+# 24.10 installs the .ipk assets with opkg, 25.12 the .apk ones with apk
+RUN set -e; \
+    mkdir -p /tmp/dl && cd /tmp/dl; \
+    R=https://github.com/itdoginfo/podkop/releases/download/$PODKOP_VERSION; \
+    if command -v apk > /dev/null 2>&1; then \
+        for f in podkop-$PODKOP_VERSION-r1.apk \
+                 luci-app-podkop-$PODKOP_VERSION-r1.apk \
+                 luci-i18n-podkop-ru-$PODKOP_VERSION.apk; do \
+            wget -q -O "$f" "$R/$f"; \
+        done; \
+        apk add --allow-untrusted --force-broken-world ./*.apk > /dev/null 2>&1 || true; \
+        apk add luci > /dev/null 2>&1; \
+    else \
+        for f in podkop-v$PODKOP_VERSION-r1-all.ipk \
+                 luci-app-podkop-v$PODKOP_VERSION-r1-all.ipk \
+                 luci-i18n-podkop-ru-$PODKOP_VERSION.ipk; do \
+            wget -q -O "$f" "$R/$f"; \
+        done; \
+        opkg install --force-depends ./*.ipk > /dev/null 2>&1 || true; \
+        opkg install luci > /dev/null 2>&1; \
+    fi; \
+    uci set uhttpd.main.ubus_prefix=/ubus; \
+    uci commit uhttpd; \
+    rm -rf /tmp/dl; \
+    podkop show_version

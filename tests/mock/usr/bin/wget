@@ -1,0 +1,39 @@
+#!/bin/sh
+# shellcheck shell=dash
+# wget stand-in for install.sh: serves $MOCK_WGET_DIR/<name>, where <name> is "releases" for the
+# release list, "release-<tag>" for one release and the file name for an asset; a missing file is a
+# failed fetch. Every URL is recorded in $MOCK_CALLS. Without $MOCK_WGET_DIR this is the real wget,
+# so the tests that download podkop's own packages are untouched.
+[ -n "${MOCK_WGET_DIR:-}" ] || exec /bin/uclient-fetch "$@"
+
+out=-
+url=''
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -O)
+            out="$2"
+            shift 2
+            ;;
+        -*) shift ;;
+        *)
+            url="$1"
+            shift
+            ;;
+    esac
+done
+
+case "$url" in
+    */releases | */releases\?*) name=releases ;;
+    */releases/tags/*) name="release-${url##*/}" ;;
+    *) name="${url##*/}" ;;
+esac
+
+[ -n "${MOCK_CALLS:-}" ] && echo "wget $url" >> "$MOCK_CALLS"
+
+[ -f "$MOCK_WGET_DIR/$name" ] || exit 1
+if [ "$out" = - ]; then
+    cat "$MOCK_WGET_DIR/$name"
+else
+    cat "$MOCK_WGET_DIR/$name" > "$out"
+fi

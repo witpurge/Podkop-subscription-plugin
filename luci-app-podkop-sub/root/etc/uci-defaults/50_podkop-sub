@@ -1,0 +1,21 @@
+#!/bin/sh
+# shellcheck shell=dash
+# Runs on every install and upgrade of the package, so everything here is idempotent.
+
+# a sysupgrade.conf not ending in a newline would otherwise swallow the first line we append
+[ -s /etc/sysupgrade.conf ] && [ -n "$(tail -c1 /etc/sysupgrade.conf)" ] && echo >> /etc/sysupgrade.conf
+
+for line in /etc/config/podkop-sub /etc/podkop-sub/; do
+    grep -qxF "$line" /etc/sysupgrade.conf 2> /dev/null || echo "$line" >> /etc/sysupgrade.conf
+done
+
+mkdir -p /etc/podkop-sub/cache /etc/podkop-sub/backup
+
+# the service state is the on/off switch for auto-updates, so it starts on
+/etc/init.d/podkop-sub enable
+/etc/init.d/podkop-sub start > /dev/null 2>&1
+
+rm -f /tmp/luci-indexcache*
+[ -x /etc/init.d/rpcd ] && /etc/init.d/rpcd reload
+
+exit 0

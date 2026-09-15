@@ -1,0 +1,5 @@
+#!/bin/sh
+# shellcheck shell=dash
+# podkop init stand-in: podkop-sub only ever calls restart.
+[ -n "$MOCK_CALLS" ] && echo "podkop-init $1" >> "$MOCK_CALLS"
+exit 0

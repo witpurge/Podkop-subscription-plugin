@@ -1,0 +1,22 @@
+# Builds luci-app-podkop-sub_<ver>_podkop<target>_all.ipk for OpenWrt 24.10 (opkg).
+FROM openwrt/sdk:x86_64-v24.10.8
+
+ARG PODKOP_SUB_VERSION
+WORKDIR /builder
+
+# /builder is a VOLUME in the SDK image: without BuildKit every layer's writes to it are thrown
+# away, so the whole build is one RUN and the packages land in /tmp/out, off the volume.
+COPY --chown=buildbot:buildbot ./luci-app-podkop-sub /tmp/luci-app-podkop-sub
+
+RUN export PODKOP_SUB_VERSION="$PODKOP_SUB_VERSION" \
+    && ./scripts/feeds update -a \
+    && ./scripts/feeds install luci-base \
+    && mkdir -p package/feeds/luci \
+    && cp -a /tmp/luci-app-podkop-sub package/feeds/luci/luci-app-podkop-sub \
+    && make defconfig \
+    && make package/luci-app-podkop-sub/compile -j1 V=s \
+    && mkdir -p /tmp/out \
+    && cp bin/packages/*/luci/luci-*podkop-sub* /tmp/out/ \
+    && . /tmp/luci-app-podkop-sub/root/usr/share/podkop-sub/version \
+    && : "${TARGET_PODKOP:?missing from root/usr/share/podkop-sub/version}" \
+    && for f in /tmp/out/*_all.ipk; do mv "$f" "${f%_all.ipk}_podkop${TARGET_PODKOP}_all.ipk"; done

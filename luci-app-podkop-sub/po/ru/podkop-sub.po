@@ -1,0 +1,252 @@
+# RU translations for the PODKOP-SUB package.
+# Copyright (C) 2026 THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PODKOP-SUB package.
+# witpurge, 2026.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: PODKOP-SUB\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-15 16:54+0700\n"
+"PO-Revision-Date: 2026-09-15 11:04+0700\n"
+"Last-Translator: \n"
+"Language-Team: none\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+#, javascript-format
+msgid "podkop-sub %s failed with code %d"
+msgstr "podkop-sub %s: ошибка, код %d"
+
+#, javascript-format
+msgid "The service failed to %s (code %d)"
+msgstr "Служба: команда %s не выполнена (код %d)"
+
+#, javascript-format
+msgid "Service: %s done."
+msgstr "Служба: команда %s выполнена."
+
+msgid "The log is empty."
+msgstr "Журнал пуст."
+
+msgid "Debug log"
+msgstr "Журнал отладки"
+
+msgid "Clear log"
+msgstr "Очистить журнал"
+
+msgid "Close"
+msgstr "Закрыть"
+
+msgid "Never updated"
+msgstr "Ещё не обновлялась"
+
+#, javascript-format
+msgid "Links: %d"
+msgstr "Ссылок: %d"
+
+#, javascript-format
+msgid "Error: %s"
+msgstr "Ошибка: %s"
+
+msgid "unknown"
+msgstr "неизвестно"
+
+#, javascript-format
+msgid "updated %s"
+msgstr "обновлена %s"
+
+#, javascript-format
+msgid "expires %s"
+msgstr "истекает %s"
+
+#, javascript-format
+msgid "%s left"
+msgstr "осталось %s"
+
+#, javascript-format
+msgid "All nodes (%d) × sections (%d) = %d outbounds in podkop"
+msgstr "Все узлы (%d) × секции (%d) = исходящих в podkop: %d"
+
+#, javascript-format
+msgid "Nodes (%d of %d) × sections (%d) = %d outbounds in podkop"
+msgstr "Узлы (%d из %d) × секции (%d) = исходящих в podkop: %d"
+
+#, javascript-format
+msgid "Subscription %s no longer offers these nodes: %s. They are skipped until they come back."
+msgstr "Подписка %s больше не отдаёт выбранные узлы: %s. Они пропускаются, пока не вернутся."
+
+#, javascript-format
+msgid "Section %s: your node %s is not answering, so traffic goes through %s, another node of your selection."
+msgstr "Секция %s: ваш узел %s не отвечает, поэтому трафик идёт через %s — другой узел из вашего выбора."
+
+#, javascript-format
+msgid "Section %s: none of your nodes answer, so %s was borrowed from the subscription to keep the section alive. It is dropped as soon as one of yours comes back."
+msgstr "Секция %s: ни один из ваших узлов не отвечает, поэтому из подписки одолжен %s, чтобы секция продолжала работать. Он будет убран сам, как только ваш узел вернётся."
+
+#, javascript-format
+msgid "Section %s: no node answered. The plugin keeps probing it."
+msgstr "Секция %s: ни один узел не ответил. Плагин продолжает её проверять."
+
+msgid "-- select --"
+msgstr "-- выберите --"
+
+msgid "Selector"
+msgstr "Selector"
+
+msgid "URLTest"
+msgstr "URLTest"
+
+msgid "Choose a configuration type"
+msgstr "Выберите тип конфигурации"
+
+msgid "Subscriptions"
+msgstr "Подписки"
+
+msgid "Every enabled subscription feeds the podkop sections it targets."
+msgstr "Каждая включённая подписка наполняет выбранные в ней секции podkop."
+
+msgid "Add subscription"
+msgstr "Добавить подписку"
+
+msgid "Name"
+msgstr "Имя"
+
+msgid "Your own label for this subscription."
+msgstr "Ваше название для этой подписки."
+
+msgid "Main"
+msgstr "Основная"
+
+msgid "Subscription URL"
+msgstr "URL подписки"
+
+msgid "Expecting exactly one http(s) URL"
+msgstr "Нужен ровно один адрес http:// или https://"
+
+msgid "Enabled"
+msgstr "Включено"
+
+msgid "Node list"
+msgstr "Список узлов"
+
+msgid "Refresh"
+msgstr "Обновить"
+
+msgid "Fetch this subscription's nodes. Nothing is written to podkop."
+msgstr "Загрузить узлы этой подписки. В podkop ничего не записывается."
+
+msgid "Save the subscription first."
+msgstr "Сначала сохраните подписку."
+
+msgid "Node list refreshed."
+msgstr "Список узлов обновлён."
+
+msgid "Nodes"
+msgstr "Узлы"
+
+msgid "Nodes this subscription hands to podkop. Select none to use all of them."
+msgstr "Узлы, которые эта подписка отдаёт в podkop. Не выбирайте ничего, чтобы использовать все."
+
+msgid "No nodes cached yet — press Refresh."
+msgstr "Узлы ещё не загружены — нажмите «Обновить»."
+
+msgid "All nodes"
+msgstr "Все узлы"
+
+msgid "podkop sections"
+msgstr "Секции podkop"
+
+msgid "Sections whose proxy list this subscription fills."
+msgstr "Секции, в которые эта подписка записывает список proxy."
+
+msgid "User agent"
+msgstr "User agent"
+
+msgid "State"
+msgstr "Состояние"
+
+msgid "Configuration type per section"
+msgstr "Тип конфигурации для каждой секции"
+
+msgid "A podkop section has one type, so it is chosen here and not per subscription."
+msgstr "У секции podkop только один тип, поэтому он задаётся здесь, а не в каждой подписке."
+
+msgid "Update now"
+msgstr "Обновить сейчас"
+
+msgid "Download every subscription, then write the result into podkop."
+msgstr "Скачать все подписки и записать результат в podkop."
+
+msgid "Subscriptions updated and applied."
+msgstr "Подписки обновлены и применены."
+
+msgid "Show log"
+msgstr "Показать журнал"
+
+msgid "What the plugin did, newest last. Nothing secret is written here."
+msgstr "Что делал плагин, новые записи внизу. Ничего секретного сюда не записывается."
+
+msgid "Running"
+msgstr "Работает"
+
+msgid "Stopped"
+msgstr "Остановлена"
+
+msgid "starts on boot"
+msgstr "запускается при загрузке"
+
+msgid "does not start on boot"
+msgstr "не запускается при загрузке"
+
+msgid "Settings"
+msgstr "Настройки"
+
+msgid "Auto-update service"
+msgstr "Служба автообновления"
+
+msgid "Stopping it only turns off background checks: Update now and Save & Apply keep working."
+msgstr "Её остановка отключает только фоновые проверки: «Обновить сейчас» и «Применить» продолжают работать."
+
+msgid "Start"
+msgstr "Запустить"
+
+msgid "Stop"
+msgstr "Остановить"
+
+msgid "Restart"
+msgstr "Перезапустить"
+
+msgid "Check interval"
+msgstr "Интервал проверки"
+
+msgid "Minutes between automatic checks."
+msgstr "Минуты между автоматическими проверками."
+
+msgid "Ping timeout"
+msgstr "Таймаут пинга"
+
+msgid "Milliseconds to wait for a node to answer."
+msgstr "Сколько миллисекунд ждать ответа от узла."
+
+msgid "Max failures"
+msgstr "Максимум неудач"
+
+msgid "Failed checks in a row before the section is refreshed."
+msgstr "Сколько неудачных проверок подряд до обновления секции."
+
+#, javascript-format
+msgid "This plugin was built for podkop %s, but podkop %s is installed. Everything still works, but instabilities are possible."
+msgstr "Плагин собран для podkop %s, а установлен podkop %s. Всё продолжает работать, но возможны сбои."
+
+msgid "Podkop Subscriptions"
+msgstr "Подписки Podkop"
+
+msgid "Keep podkop's section configs in sync with VPN subscriptions."
+msgstr "Обновляет конфигурации секций podkop по VPN-подпискам."
+
+msgid "Saved and applied to podkop."
+msgstr "Сохранено и применено к podkop."

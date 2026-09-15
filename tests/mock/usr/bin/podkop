@@ -1,0 +1,53 @@
+#!/bin/sh
+# shellcheck shell=dash
+# podkop stand-in: only the calls podkop-sub makes. Every call is recorded in $MOCK_CALLS.
+# MOCK_PODKOP_DOWN=1 answers like a dead clash API; a non-numeric MOCK_DELAY fails every latency
+# test and MOCK_DEAD fails it for the tags it lists. set_group_proxy updates $MOCK_PROXIES, so
+# the selector really moves.
+[ -n "$MOCK_CALLS" ] && echo "podkop $*" >> "$MOCK_CALLS"
+
+case "$1" in
+    show_version) echo "v${MOCK_PODKOP_VERSION:-0.7.22}" ;;
+    clash_api)
+        [ -n "$MOCK_PODKOP_DOWN" ] && exit 1
+        case "$2" in
+            get_proxies)
+                if [ -n "$MOCK_PROXIES" ] && [ -f "$MOCK_PROXIES" ]; then
+                    cat "$MOCK_PROXIES"
+                else
+                    echo '{"proxies":{}}'
+                fi
+                ;;
+            get_proxy_latency)
+                case " $MOCK_DEAD " in
+                    *" $3 "*)
+                        echo '{"message":"An error occurred in the delay test"}'
+                        exit 1
+                        ;;
+                esac
+                case "${MOCK_DELAY:-42}" in
+                    '' | *[!0-9]*)
+                        echo '{"message":"An error occurred in the delay test"}'
+                        exit 1
+                        ;;
+                    *) printf '{"delay":%s}\n' "${MOCK_DELAY:-42}" ;;
+                esac
+                ;;
+            set_group_proxy)
+                if [ -n "$MOCK_PROXIES" ] && [ -f "$MOCK_PROXIES" ]; then
+                    jq --arg g "$3" --arg p "$4" '.proxies[$g].now = $p' "$MOCK_PROXIES" \
+                        > "$MOCK_PROXIES.tmp" && mv "$MOCK_PROXIES.tmp" "$MOCK_PROXIES"
+                fi
+                printf '{"success":true,"group":"%s","proxy":"%s"}\n' "$3" "$4"
+                ;;
+            *)
+                echo '{"error":"unknown action"}'
+                exit 1
+                ;;
+        esac
+        ;;
+    *)
+        echo "unknown command: $1" >&2
+        exit 1
+        ;;
+esac

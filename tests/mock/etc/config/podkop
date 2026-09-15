@@ -1,0 +1,19 @@
+
+config settings 'settings'
+	option dns_type 'udp'
+	option dns_server '77.88.8.8'
+	option update_interval '1d'
+
+config section 'main'
+	option connection_type 'proxy'
+	option enable_udp_over_tcp '0'
+	list community_lists 'russia_inside'
+	option proxy_config_type 'url'
+	option proxy_string 'vless://00000000-0000-0000-0000-000000000000@old.example.net:443?type=tcp#old-main'
+
+config section 'media'
+	option connection_type 'vpn'
+	option interface 'wg0'
+	list community_lists 'youtube'
+	option proxy_config_type 'url'
+

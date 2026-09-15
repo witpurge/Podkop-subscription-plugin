@@ -1,0 +1,5 @@
+<!DOCTYPE html>
+<html><head><title>502 Bad Gateway</title></head>
+<body><h1>502 Bad Gateway</h1>
+<p>The panel is temporarily unavailable. Please try again later.</p>
+</body></html>

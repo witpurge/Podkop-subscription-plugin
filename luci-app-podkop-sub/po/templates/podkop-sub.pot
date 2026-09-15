@@ -1,0 +1,331 @@
+# Translation template for the PODKOP-SUB package.
+# Copyright (C) 2026 THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PODKOP-SUB package.
+# witpurge, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PODKOP-SUB\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-15 16:54+0700\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: \n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:48
+#, javascript-format
+msgid "podkop-sub %s failed with code %d"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:80
+#, javascript-format
+msgid "The service failed to %s (code %d)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:83
+#, javascript-format
+msgid "Service: %s done."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:92
+msgid "The log is empty."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:94
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:478
+msgid "Debug log"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:107
+msgid "Clear log"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:113
+msgid "Close"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:139
+msgid "Never updated"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:144
+#, javascript-format
+msgid "Links: %d"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:146
+#, javascript-format
+msgid "Error: %s"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:146
+msgid "unknown"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:149
+#, javascript-format
+msgid "updated %s"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:152
+#, javascript-format
+msgid "expires %s"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:156
+#, javascript-format
+msgid "%s left"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:168
+#, javascript-format
+msgid "All nodes (%d) × sections (%d) = %d outbounds in podkop"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:176
+#, javascript-format
+msgid "Nodes (%d of %d) × sections (%d) = %d outbounds in podkop"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:203
+#, javascript-format
+msgid "Subscription %s no longer offers these nodes: %s. They are skipped until they come back."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:222
+#, javascript-format
+msgid "Section %s: your node %s is not answering, so traffic goes through %s, another node of your selection."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:229
+#, javascript-format
+msgid ""
+"Section %s: none of your nodes answer, so %s was borrowed from the subscription to keep the section alive. It is "
+"dropped as soon as one of yours comes back."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:235
+#, javascript-format
+msgid "Section %s: no node answered. The plugin keeps probing it."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:288
+msgid "-- select --"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:289
+msgid "Selector"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:290
+msgid "URLTest"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:293
+msgid "Choose a configuration type"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:312
+msgid "Subscriptions"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:324
+msgid "Every enabled subscription feeds the podkop sections it targets."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:329
+msgid "Add subscription"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:334
+msgid "Name"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:335
+msgid "Your own label for this subscription."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:337
+msgid "Main"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:339
+msgid "Subscription URL"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:348
+msgid "Expecting exactly one http(s) URL"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:352
+msgid "Enabled"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:355
+msgid "Node list"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:356
+msgid "Refresh"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:358
+msgid "Fetch this subscription's nodes. Nothing is written to podkop."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:362
+msgid "Save the subscription first."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:365
+msgid "Node list refreshed."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:371
+msgid "Nodes"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:372
+msgid "Nodes this subscription hands to podkop. Select none to use all of them."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:380
+msgid "No nodes cached yet — press Refresh."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:389
+msgid "All nodes"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:436
+msgid "podkop sections"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:437
+msgid "Sections whose proxy list this subscription fills."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:445
+msgid "User agent"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:449
+msgid "State"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:458
+msgid "Configuration type per section"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:459
+msgid "A podkop section has one type, so it is chosen here and not per subscription."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:467
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:468
+msgid "Update now"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:470
+msgid "Download every subscription, then write the result into podkop."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:475
+msgid "Subscriptions updated and applied."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:479
+msgid "Show log"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:481
+msgid "What the plugin did, newest last. Nothing secret is written here."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:491
+msgid "Running"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:491
+msgid "Stopped"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:492
+msgid "starts on boot"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:492
+msgid "does not start on boot"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:512
+msgid "Settings"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:520
+msgid "Auto-update service"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:521
+msgid "Stopping it only turns off background checks: Update now and Save & Apply keep working."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:527
+msgid "Start"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:529
+msgid "Stop"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:531
+msgid "Restart"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:537
+msgid "Check interval"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:538
+msgid "Minutes between automatic checks."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:546
+msgid "Ping timeout"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:547
+msgid "Milliseconds to wait for a node to answer."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:555
+msgid "Max failures"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:556
+msgid "Failed checks in a row before the section is refreshed."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:572
+#, javascript-format
+msgid ""
+"This plugin was built for podkop %s, but podkop %s is installed. Everything still works, but instabilities are "
+"possible."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:593
+msgid "Podkop Subscriptions"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:594
+msgid "Keep podkop's section configs in sync with VPN subscriptions."
+msgstr ""
+
+#: htdocs/luci-static/resources/view/podkop-sub/subscriptions.js:616
+msgid "Saved and applied to podkop."
+msgstr ""

@@ -1,0 +1,23 @@
+config settings 'settings'
+	option check_interval '60'
+	option ping_timeout '2000'
+	option max_failures '5'
+
+config subscription
+	option name 'Main'
+	option url 'https://panel.example.net/sub/plain'
+	option enabled '1'
+	list sections 'main'
+	list sections 'media'
+
+config subscription
+	option name 'Extra'
+	option url 'https://panel.example.net/sub/alt'
+	option enabled '1'
+	list sections 'main'
+
+config managed_section 'main'
+	option mode 'selector'
+
+config managed_section 'media'
+	option mode 'urltest'

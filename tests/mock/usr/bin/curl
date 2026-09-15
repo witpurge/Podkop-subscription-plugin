@@ -1,0 +1,76 @@
+#!/bin/sh
+# shellcheck shell=dash
+# shellcheck disable=SC2154 # code/body/extra are assigned by the evals below
+# curl stand-in: serves $MOCK_FIXTURE_DIR/<last url element>.txt, overridable per URL by MOCK_*_<name>.
+# An mqtt:// URL is the reachability probe: every host:port in $MOCK_TCP_DEAD is refused. The real
+# curl is read through -w '%{time_connect}', not through its exit code, so answer the same way.
+url=''
+out=''
+hdrs=''
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o | -D | -w | -A | --max-time | --retry | --connect-timeout)
+            [ "$1" = -o ] && out="$2"
+            [ "$1" = -D ] && hdrs="$2"
+            shift 2
+            ;;
+        -*) shift ;;
+        *)
+            url="$1"
+            shift
+            ;;
+    esac
+done
+
+case "$url" in
+    mqtt://*)
+        hp=${url#mqtt://}
+        [ -n "$MOCK_CALLS" ] && echo "curl probe $hp" >> "$MOCK_CALLS"
+        # a dead endpoint never completes the handshake, so time_connect stays at zero
+        case " ${MOCK_TCP_DEAD:-} " in
+            *" $hp "*)
+                printf '0.000000'
+                exit 7
+                ;;
+        esac
+        # a socket that accepts and then says nothing: curl gives up with 28, but it did connect
+        case " ${MOCK_TCP_SILENT:-} " in
+            *" $hp "*)
+                printf '0.000185'
+                exit 28
+                ;;
+        esac
+        # a live socket that does not speak MQTT: a connect time, and 8 from the protocol
+        printf '0.001234'
+        exit 8
+        ;;
+esac
+
+name=${url##*/}
+eval "code=\${MOCK_HTTP_CODE_$name:-}"
+[ -n "$code" ] || code=${MOCK_HTTP_CODE:-200}
+eval "body=\${MOCK_BODY_$name:-$name}"
+eval "extra=\${MOCK_HEADERS_$name:-\$MOCK_HEADERS}"
+
+[ -n "$MOCK_CALLS" ] && echo "curl $name code=$code body=$body" >> "$MOCK_CALLS"
+
+if [ -n "$hdrs" ]; then
+    printf 'HTTP/1.1 %s MOCK\r\nContent-Type: text/plain\r\n' "$code" > "$hdrs"
+    [ -n "$extra" ] && printf '%s\r\n' "$extra" >> "$hdrs"
+    printf '\r\n' >> "$hdrs"
+fi
+
+src="${MOCK_FIXTURE_DIR:-/mock/fixtures}/$body.txt"
+if [ -n "$out" ]; then
+    if [ -f "$src" ]; then
+        cat "$src" > "$out"
+    else
+        : > "$out"
+    fi
+elif [ -f "$src" ]; then
+    cat "$src"
+fi
+
+# podkop-sub always asks for -w '%{http_code}'
+printf '%s' "$code"

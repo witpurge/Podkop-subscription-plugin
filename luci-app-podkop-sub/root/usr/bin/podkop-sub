@@ -1,0 +1,1170 @@
+#!/bin/sh
+# shellcheck shell=dash
+# shellcheck disable=SC3043 # busybox ash has `local`; podkop's own script relies on it
+# shellcheck disable=SC2016 # single-quoted jq filters use jq's own $vars, not the shell's
+# podkop-sub: keeps podkop's section configs in sync with VPN subscriptions.
+# No `set -u`/`set -e`: /lib/functions.sh reads unset vars and config_foreach fails under `set -e`.
+
+CACHE_DIR=/etc/podkop-sub/cache
+BACKUP_DIR=/etc/podkop-sub/backup
+STATE=/etc/podkop-sub/state.json
+LOCK=/var/lock/podkop-sub.lock
+PODKOP=/usr/bin/podkop
+INIT=/etc/init.d/podkop-sub
+# /tmp is tmpfs: a debug log there costs no flash writes and ends with the reboot
+LOGFILE=/tmp/podkop-sub.log
+# deliberately not a setting: 64 KiB is enough to debug with and small enough to never matter
+LOG_MAX=65536
+DEFAULT_UA='v2rayNG/1.9.0'
+# podkop cannot build a vmess outbound, so vmess:// lines are skipped, not supported
+SUPPORTED_SCHEMES='vless ss trojan hy2 hysteria2 socks socks4 socks5'
+# ~3 minutes for the proxy groups to come back; both env hooks exist only for the tests
+RESTORE_WAIT=${PODKOP_SUB_WAIT:-90}
+PODKOP_SUB_SYNC=${PODKOP_SUB_SYNC:-}
+
+# shellcheck source=/dev/null
+[ -r /usr/share/podkop-sub/version ] && . /usr/share/podkop-sub/version
+PLUGIN_VERSION=${PLUGIN_VERSION:-0.0.0}
+TARGET_PODKOP=${TARGET_PODKOP:-}
+
+if [ -z "$PODKOP_SUB_TEST" ]; then
+    # shellcheck source=/dev/null
+    . /lib/functions.sh
+    config_load podkop-sub
+fi
+
+# the page shows this file, so a message may name ids, hosts, sections and counts - never a URL
+log() {
+    local sz
+    logger -t podkop-sub "$*"
+    echo "$*"
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOGFILE" 2> /dev/null
+    sz=$(wc -c < "$LOGFILE" 2> /dev/null | tr -d ' ')
+    [ "${sz:-0}" -gt "$LOG_MAX" ] || return 0
+    # newest wins: keep the tail, and drop the half line the byte cut leaves at the top
+    tail -c "$LOG_MAX" "$LOGFILE" | sed 1d > "$LOGFILE.tmp" && mv "$LOGFILE.tmp" "$LOGFILE"
+    rm -f "$LOGFILE.tmp"
+    return 0
+}
+
+cmd_logs() {
+    case "${1:-}" in
+        '') [ -f "$LOGFILE" ] && cat "$LOGFILE" ;;
+        --clear) : > "$LOGFILE" ;;
+        # the argument is never echoed back: a mistyped command must not paste a URL into the log
+        *)
+            log "logs: unknown option"
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+# ---------------------------------------------------------------- parsing
+
+sub_id() { printf '%s' "$1" | md5sum | cut -c1-12; }
+
+# stdin -> stdout: pass a link list through, base64-decode anything else
+decode_body() {
+    local body b64 out
+    body=$(cat)
+    case "$(printf '%s' "$body" | head -c 200)" in
+        *://*)
+            printf '%s\n' "$body"
+            return 0
+            ;;
+    esac
+    b64=$(printf '%s' "$body" | tr -d ' \t\r\n' | tr '_-' '/+')
+    case "$b64" in '' | *[!A-Za-z0-9+/=]*) return 0 ;; esac
+    case $((${#b64} % 4)) in
+        1) return 0 ;;
+        2) b64="$b64==" ;;
+        3) b64="$b64=" ;;
+    esac
+    out=$(printf '%s' "$b64" | base64 -d 2> /dev/null) || return 0
+    [ -n "$out" ] && printf '%s\n' "$out"
+    return 0
+}
+
+# stdin -> stdout: only lines that start with a scheme podkop can build an outbound from
+filter_links() {
+    tr -d '\r' |
+        sed 's/^[[:space:]]*//; s/[[:space:]]*$//' |
+        grep -E "^($(echo "$SUPPORTED_SCHEMES" | tr ' ' '|'))://"
+    return 0
+}
+
+# an address in the log stays recognisable without naming the endpoint: 92.5.7.206 -> 92.x.x.206
+mask_host() {
+    local h="$1" port='' a b c d
+    # an IPv6 holds colons of its own: keep the first and last group, bracketed form included
+    case "$h" in
+        *:*:*)
+            h=${1#[}
+            port=''
+            case "$h" in *']:'*) port=":${h##*]:}"; h=${h%%]:*} ;; esac
+            h=${h%]}
+            printf '%s:x:%s%s' "${h%%:*}" "${h##*:}" "$port"
+            return 0
+            ;;
+        *:*)
+            port=":${h##*:}"
+            h=${h%:*}
+            ;;
+    esac
+    # an IPv4 keeps its first and last octet, which is enough to tell two providers apart
+    IFS=. read -r a b c d <<EOF
+$h
+EOF
+    case "$a.$b.$c.$d" in
+        *[!0-9.]* | .*) ;;
+        *)
+            [ -n "$d" ] && {
+                printf '%s.x.x.%s%s' "$a" "$d" "$port"
+                return 0
+            }
+            ;;
+    esac
+    # a name keeps its first and last label; two labels have no middle to hide
+    case "$h" in
+        *.*.*) printf '%s.x.%s%s' "${h%%.*}" "${h##*.}" "$port" ;;
+        *) printf '%s%s' "$h" "$port" ;;
+    esac
+}
+
+# a provider's label reaches the log as it is; a name that is only an address gets masked
+safe_name() {
+    case "$1" in
+        '' | *[!0-9A-Za-z.:_-]*) printf '%s' "$1" ;;
+        *.*) mask_host "$1" ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+link_hostport() {
+    local r
+    r=${1#*://}
+    r=${r%%#*}
+    r=${r%%\?*}
+    r=${r#*@}
+    r=${r%%/*}
+    printf '%s' "$r"
+}
+
+# podkop splits link lists with word splitting, so a literal space in #name breaks it
+sanitize_link() {
+    case "$1" in
+        *'#'*)
+            printf '%s#%s\n' "${1%%#*}" \
+                "$(printf '%s' "${1#*#}" | sed 's/ /%20/g; s/\t/%09/g')"
+            ;;
+        *) printf '%s#%s\n' "$1" "$(link_hostport "$1")" ;;
+    esac
+}
+
+link_name() {
+    case "$1" in
+        *'#'*) ;;
+        *)
+            link_hostport "$1"
+            return 0
+            ;;
+    esac
+    # %XX -> \xXX -> raw byte, so multi-byte UTF-8 names survive
+    printf '%b' "$(printf '%s' "${1#*#}" | sed 's/\\/\\\\/g; s/%/\\x/g')"
+}
+
+parse_subscription() {
+    local l
+    decode_body | filter_links | while IFS= read -r l; do
+        sanitize_link "$l"
+    done | awk '!seen[$0]++'
+}
+
+# ---------------------------------------------------------------- node choice
+
+# one uci list item per line: a node name may hold spaces and must never word-split
+append_line() { printf '%s\n' "$1" >> "$2"; }
+
+# the names a subscription currently offers, one per line, in the cached list's order
+sub_names() {
+    local l
+    [ -s "$CACHE_DIR/$1.lst" ] || return 0
+    # link_name prints no newline of its own: every other caller reads it through $( )
+    while IFS= read -r l; do
+        link_name "$l"
+        printf '\n'
+    done < "$CACHE_DIR/$1.lst"
+}
+
+# <cached list> <chosen names> - nothing chosen means all, nothing matching means the first node
+pick_links() {
+    local lst="$1" want="$2" l hit=0
+    if [ ! -s "$want" ]; then
+        cat "$lst"
+        return 0
+    fi
+    while IFS= read -r l; do
+        grep -Fxq "$(link_name "$l")" "$want" || continue
+        printf '%s\n' "$l"
+        hit=1
+    done < "$lst"
+    [ "$hit" = 1 ] || head -n 1 "$lst"
+}
+
+# ---------------------------------------------------------------- state
+
+state_json() {
+    if [ -s "$STATE" ] && jq -e . "$STATE" > /dev/null 2>&1; then
+        cat "$STATE"
+    else
+        echo '{"subs":{},"sections":{}}'
+    fi
+}
+
+# state_apply <jq args...> <filter> - read-modify-write state.json atomically
+state_apply() {
+    local tmp="$STATE.$$"
+    if state_json | jq "$@" > "$tmp" 2> /dev/null && [ -s "$tmp" ]; then
+        mv "$tmp" "$STATE"
+        return 0
+    fi
+    rm -f "$tmp"
+    log "failed to update $STATE"
+    return 1
+}
+
+# jq over one section of state.json: the abnormal state check left it in, "ok" when there is none
+HEALTH='if .status == "fail" then "fail"
+        elif (.added // "") != "" then "added"
+        elif (.failover // "") != "" then "failover"
+        else "ok" end'
+
+# ---------------------------------------------------------------- update
+
+# ui_field <header line> <key> - one number out of subscription-userinfo
+ui_field() { printf '%s' "$1" | sed -n "s/.*[ ;:]$2=\([0-9][0-9]*\).*/\1/p"; }
+
+sub_error() {
+    # masked here, not at the call sites: an error path must not be the one that leaks the endpoint
+    log "$1 ($(mask_host "$2")): $3"
+    state_apply --arg id "$1" --arg url "$4" --arg e "$3" \
+        '.subs[$id] = ((.subs[$id] // {}) + {url: $url, status: "error", error: $e})'
+}
+
+update_one() {
+    local sec="$1" target="$2" force="$3"
+    local en url id ua host hdrs body dec lst count all kept skipped hash old now want miss back
+    local ui up down total expire left
+
+    config_get_bool en "$sec" enabled 1
+    [ "$en" = 1 ] || return 0
+    config_get url "$sec" url
+    [ -n "$url" ] || return 0
+    id=$(sub_id "$url")
+    [ "$target" = "--all" ] || [ "$target" = "$id" ] || return 0
+    UPDATE_TRIED=1
+
+    config_get ua "$sec" user_agent "$DEFAULT_UA"
+    host=${url#*://}
+    host=${host%%/*}
+    host=${host%%\?*}
+
+    hdrs="$RUNTMP/$id.hdr"
+    body="$RUNTMP/$id.body"
+    # -k: panels often sit on an IP with a self-signed certificate
+    now=$(curl -skL --max-time 20 --retry 2 -A "$ua" -D "$hdrs" -o "$body" \
+        -w '%{http_code}' "$url" 2> /dev/null)
+    case "$now" in
+        2??) ;;
+        *)
+            sub_error "$id" "$host" "http ${now:-000}" "$url"
+            return 0
+            ;;
+    esac
+    [ -s "$body" ] || {
+        sub_error "$id" "$host" "empty body" "$url"
+        return 0
+    }
+
+    dec="$RUNTMP/$id.dec"
+    lst="$RUNTMP/$id.lst"
+    decode_body < "$body" > "$dec"
+    parse_subscription < "$dec" > "$lst"
+    count=$(wc -l < "$lst" | tr -d ' ')
+    if [ "$count" -eq 0 ]; then
+        sub_error "$id" "$host" "no supported links" "$url"
+        return 0
+    fi
+    all=$(grep -c '://' "$dec")
+    kept=$(filter_links < "$dec" | wc -l | tr -d ' ')
+    skipped=$((all - kept))
+    [ "$skipped" -ge 0 ] || skipped=0
+
+    hash=$(sha256sum "$lst" | cut -d' ' -f1)
+    old=$(state_json | jq -r --arg id "$id" '.subs[$id].hash // ""')
+    if [ "$hash" = "$old" ] && [ -z "$force" ] && [ -s "$CACHE_DIR/$id.lst" ]; then
+        log "$id ($(mask_host "$host")): unchanged, $count links"
+    else
+        mv "$lst" "$CACHE_DIR/$id.lst" || return 0
+        log "$id ($(mask_host "$host")): $count links, $skipped skipped"
+    fi
+
+    # chosen names the provider no longer offers; never written back, so they survive a bad fetch
+    want="$RUNTMP/$id.want"
+    miss="$RUNTMP/$id.miss"
+    : > "$want"
+    config_list_foreach "$sec" nodes append_line "$want"
+    sub_names "$id" > "$RUNTMP/$id.names"
+    grep -Fxv -f "$RUNTMP/$id.names" "$want" > "$miss"
+    # a name the provider had dropped and offers again is the recovery the check loop is for
+    state_json | jq -r --arg id "$id" '.subs[$id].missing[]?' > "$RUNTMP/$id.was"
+    while IFS= read -r back; do
+        [ -n "$back" ] && ! grep -Fxq "$back" "$miss" && log "$id ($(mask_host "$host")): $(safe_name "$back") is back"
+    done < "$RUNTMP/$id.was"
+
+    ui=$(grep -i '^subscription-userinfo:' "$hdrs" 2> /dev/null | tr -d '\r' | tail -n 1)
+    up=$(ui_field "$ui" upload)
+    down=$(ui_field "$ui" download)
+    total=$(ui_field "$ui" total)
+    expire=$(ui_field "$ui" expire)
+    left=$((${total:-0} - ${up:-0} - ${down:-0}))
+    [ "$left" -ge 0 ] || left=0
+    now=$(date +%s)
+
+    state_apply --arg id "$id" --arg url "$url" --arg h "$hash" \
+        --argjson c "$count" --argjson s "$skipped" --argjson t "$now" \
+        --argjson e "${expire:-0}" --argjson l "$left" --rawfile miss "$miss" \
+        '($miss | split("\n") | map(select(length > 0))) as $m |
+         (($m | length) > 0 and (.subs[$id].missing_ack // false)) as $ack |
+         .subs[$id] = {url: $url, hash: $h, count: $c, skipped: $s, updated: $t,
+                       status: "ok", error: "", expire: $e, traffic_left: $l,
+                       missing: $m, missing_ack: $ack}'
+    UPDATE_OK=1
+}
+
+cmd_update() {
+    local a target=--all force=''
+    for a in "$@"; do
+        case "$a" in
+            --all) target=--all ;;
+            --force) force=1 ;;
+            -*)
+                log "unknown option: $a"
+                return 1
+                ;;
+            *) target=$a ;;
+        esac
+    done
+    UPDATE_OK=0
+    UPDATE_TRIED=0
+    RUNTMP=$(mktemp -d) || return 1
+    config_foreach update_one subscription "$target" "$force"
+    rm -rf "$RUNTMP"
+    [ "$UPDATE_OK" = 1 ] || [ "$UPDATE_TRIED" = 0 ]
+}
+
+cmd_ack() {
+    [ -n "${1:-}" ] || return 1
+    state_apply --arg id "$1" '.subs[$id] = ((.subs[$id] // {}) + {missing_ack: true})'
+}
+
+# a section's health changes on its own, so the ack records which state was silenced
+cmd_ack_section() {
+    [ -n "${1:-}" ] || return 1
+    state_apply --arg s "$1" \
+        '.sections[$s] = ((.sections[$s] // {}) + {health_ack: (.sections[$s] // {} | '"$HEALTH"')})'
+}
+
+# ---------------------------------------------------------------- apply
+
+# empty when the user has not picked one yet; such a section is never touched
+section_mode() {
+    case "$(uci -q get "podkop-sub.$1.mode")" in
+        selector) echo selector ;;
+        urltest) echo urltest ;;
+    esac
+}
+
+# single-quote a value for the generated backup script
+shq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
+# uci returns a list space-separated; links never contain spaces, that is what sanitize_link is for
+uci_list() {
+    local v
+    # shellcheck disable=SC2046
+    for v in $(uci -q get "podkop.$1.$2"); do printf '%s\n' "$v"; done
+}
+
+current_links() {
+    if [ "$(uci -q get "podkop.$1.proxy_config_type")" = urltest ]; then
+        uci_list "$1" urltest_proxy_links
+    else
+        uci_list "$1" selector_proxy_links
+    fi
+}
+
+backup_section() {
+    local s="$1" o v tmp
+    [ -f "$BACKUP_DIR/$s.uci" ] && return 0
+    tmp="$BACKUP_DIR/$s.uci.$$"
+    : > "$tmp"
+    for o in connection_type proxy_config_type proxy_string; do
+        if v=$(uci -q get "podkop.$s.$o"); then
+            printf 'uci set podkop.%s.%s=%s\n' "$s" "$o" "$(shq "$v")" >> "$tmp"
+        else
+            printf 'uci -q delete podkop.%s.%s\n' "$s" "$o" >> "$tmp"
+        fi
+    done
+    for o in selector_proxy_links urltest_proxy_links; do
+        printf 'uci -q delete podkop.%s.%s\n' "$s" "$o" >> "$tmp"
+        uci_list "$s" "$o" | while IFS= read -r v; do
+            printf 'uci add_list podkop.%s.%s=%s\n' "$s" "$o" "$(shq "$v")" >> "$tmp"
+        done
+    done
+    mv "$tmp" "$BACKUP_DIR/$s.uci"
+}
+
+rollback_section() {
+    [ -f "$BACKUP_DIR/$1.uci" ] || return 0
+    sh "$BACKUP_DIR/$1.uci"
+}
+
+forget_section() {
+    rm -f "$BACKUP_DIR/$1.uci"
+    state_apply --arg s "$1" 'del(.sections[$s])'
+}
+
+# remember which node the selector points at, by name, before the list is overwritten
+remember_choice() {
+    local s="$1" i link name
+    i=$(selector_index "$s")
+    [ "$i" -gt 0 ] || return 0
+    link=$(current_links "$s" | sed -n "${i}p")
+    [ -n "$link" ] || return 0
+    name=$(link_name "$link")
+    # a node check failed over to is ours, not his: recording it would lose what to come back to
+    [ "$name" = "$(sec_state "$s" failover)" ] && return 0
+    state_apply --arg s "$s" --arg n "$name" \
+        '.sections[$s] = ((.sections[$s] // {}) + {selected: $n})'
+}
+
+write_section() {
+    local s="$1" f="$2" mode list other l
+    backup_section "$s"
+    remember_choice "$s"
+    mode=$(section_mode "$s")
+    if [ "$mode" = urltest ]; then
+        list=urltest_proxy_links
+        other=selector_proxy_links
+    else
+        list=selector_proxy_links
+        other=urltest_proxy_links
+    fi
+    uci set "podkop.$s.connection_type=proxy"
+    uci set "podkop.$s.proxy_config_type=$mode"
+    uci -q delete "podkop.$s.proxy_string"
+    uci -q delete "podkop.$s.$other"
+    # rewriting an identical list still counts as a uci change, so compare first
+    [ "$(uci_list "$s" "$list")" = "$(cat "$f")" ] && return 0
+    uci -q delete "podkop.$s.$list"
+    while IFS= read -r l; do
+        [ -n "$l" ] && uci add_list "podkop.$s.$list=$l"
+    done < "$f"
+}
+
+# sing-box loads one config, so every group returns at once: wait for the first, not for each
+# <section to watch for> <tries> - ~3 minutes, a live router regularly needs more than half of one
+wait_for_group() {
+    local s="$1" try=0
+    while [ "$try" -lt "$2" ]; do
+        "$PODKOP" clash_api get_proxies 2> /dev/null |
+            jq -e --arg g "$s-out" '.proxies[$g]' > /dev/null 2>&1 && return 0
+        try=$((try + 1))
+        sleep 2
+    done
+    return 1
+}
+
+# the node the selector must end on: while a failover is in effect it is ours, not the user's pick
+restore_target() {
+    local n
+    n=$(sec_state "$1" failover)
+    [ -n "$n" ] || n=$(sec_state "$1" selected)
+    printf '%s' "$n"
+}
+
+# only a selector section with a node to put back is worth waiting for
+needs_restore() {
+    [ "$(section_mode "$1")" = urltest ] && return 1
+    [ -n "$(restore_target "$1")" ]
+}
+
+# put the selector back on the node that should carry the traffic, by name
+restore_choice() {
+    local s="$1" f="$2" want n
+    needs_restore "$s" || return 0
+    want=$(restore_target "$s")
+
+    # the long wait already happened once in cmd_restore_nodes; this is only the per-group tail
+    wait_for_group "$s" 5 || {
+        log "$s: proxy group did not come back, keeping podkop's default"
+        return 0
+    }
+
+    n=$(link_index "$f" "$want")
+    [ "$n" -gt 0 ] || return 0
+    "$PODKOP" clash_api set_group_proxy "$s-out" "$s-$n-out" > /dev/null 2>&1 ||
+        log "$s: could not select $s-$n-out"
+}
+
+# internal: apply detaches this, so <dir> is ours to read and to remove. Reads only, takes no lock.
+cmd_restore_nodes() {
+    local dir="${1:-}" f s found='' waited=''
+    [ -n "$dir" ] && [ -d "$dir" ] || return 1
+    for f in "$dir"/sec.*; do
+        [ -f "$f" ] || continue
+        found=1
+        s=${f##*/sec.}
+        needs_restore "$s" || continue
+        # one wait for podkop to come back, not one per section: three of them meant nine minutes
+        if [ -z "$waited" ]; then
+            waited=1
+            wait_for_group "$s" "$RESTORE_WAIT"
+        fi
+        restore_choice "$s" "$f"
+    done
+    # only a handoff directory from apply is ever removed
+    [ -n "$found" ] && rm -rf "$dir"
+    return 0
+}
+
+collect_links() {
+    local sec="$1" dir="$2" en url id secs s want pick
+    config_get_bool en "$sec" enabled 1
+    [ "$en" = 1 ] || return 0
+    config_get url "$sec" url
+    [ -n "$url" ] || return 0
+    id=$(sub_id "$url")
+    [ -s "$CACHE_DIR/$id.lst" ] || return 0
+    # the only place the link list is assembled, so the only place the node choice is applied
+    want="$dir/want.$id"
+    pick="$dir/pick.$id"
+    : > "$want"
+    config_list_foreach "$sec" nodes append_line "$want"
+    pick_links "$CACHE_DIR/$id.lst" "$want" > "$pick"
+    config_get secs "$sec" sections
+    for s in $secs; do
+        cat "$pick" >> "$dir/sec.$s"
+    done
+}
+
+apply_locked() {
+    local force="$1" f s targets='' n pending='' extra
+    RUNTMP=$(mktemp -d) || return 1
+    config_foreach collect_links subscription "$RUNTMP"
+
+    for f in "$RUNTMP"/sec.*; do
+        [ -f "$f" ] || continue
+        s=${f##*/sec.}
+        # a section the user deleted is forgotten, never recreated from the backup
+        if ! uci -q get "podkop.$s" > /dev/null 2>&1; then
+            log "section $s is gone from podkop, dropping it"
+            forget_section "$s"
+            continue
+        fi
+        if [ -z "$(section_mode "$s")" ]; then
+            log "section $s has no configuration type set, skipping it"
+            continue
+        fi
+        # the node check borrowed while every chosen one was dead rides along until it is dropped
+        extra=$(state_json | jq -r --arg s "$s" '.sections[$s].added_link // ""')
+        [ -n "$extra" ] && ! grep -Fxq "$extra" "$f" && printf '%s\n' "$extra" >> "$f"
+        targets="$targets $s"
+        write_section "$s" "$f"
+    done
+
+    for s in $(state_json | jq -r '.sections | keys[]?'); do
+        case " $targets " in *" $s "*) continue ;; esac
+        if uci -q get "podkop.$s" > /dev/null 2>&1; then
+            log "section $s is no longer targeted, rolling it back"
+            rollback_section "$s"
+        else
+            log "section $s is gone from podkop, dropping it"
+        fi
+        forget_section "$s"
+    done
+
+    if [ -z "$(uci changes podkop)" ] && [ -z "$force" ]; then
+        log "no changes"
+        rm -rf "$RUNTMP"
+        return 0
+    fi
+
+    uci commit podkop || {
+        log "uci commit podkop failed"
+        rm -rf "$RUNTMP"
+        return 1
+    }
+    /etc/init.d/podkop restart
+    log "podkop restarted for${targets:- none}"
+
+    for s in $targets; do
+        needs_restore "$s" && pending=1
+        n=$(wc -l < "$RUNTMP/sec.$s" | tr -d ' ')
+        state_apply --arg s "$s" --arg m "$(section_mode "$s")" \
+            --argjson n "$n" --argjson t "$(date +%s)" \
+            '.sections[$s] = ((.sections[$s] // {}) +
+                              {mode: $m, links: $n, status: "ok", applied: $t})'
+    done
+
+    # the restore waits minutes for sing-box while LuCI gives an rpc call 20 s, so it outlives us
+    if [ -z "$pending" ]; then
+        rm -rf "$RUNTMP"
+    elif [ -n "$PODKOP_SUB_SYNC" ]; then
+        cmd_restore_nodes "$RUNTMP"
+    else
+        # rpcd reads stdout to EOF, and fd 9 is our lock: the child must hold neither
+        "$0" restore-nodes "$RUNTMP" > /dev/null 2>&1 9>&- &
+    fi
+    return 0
+}
+
+cmd_apply() {
+    local force=''
+    [ "${1:-}" = "--force" ] && force=1
+    (
+        flock -n 9 || {
+            log "another podkop-sub run holds the lock"
+            exit 1
+        }
+        apply_locked "$force"
+    ) 9> "$LOCK"
+}
+
+restore_locked() {
+    local target="$1" f s
+    for f in "$BACKUP_DIR"/*.uci; do
+        [ -f "$f" ] || continue
+        s=${f##*/}
+        s=${s%.uci}
+        [ -z "$target" ] || [ "$target" = "$s" ] || continue
+        if uci -q get "podkop.$s" > /dev/null 2>&1; then
+            rollback_section "$s"
+            log "restored section $s"
+        else
+            log "section $s is gone from podkop, dropping it"
+        fi
+        forget_section "$s"
+    done
+    [ -n "$(uci changes podkop)" ] || return 0
+    uci commit podkop && /etc/init.d/podkop restart
+}
+
+cmd_restore() {
+    local target="${1:-}"
+    (
+        flock -n 9 || {
+            log "another podkop-sub run holds the lock"
+            exit 1
+        }
+        restore_locked "$target"
+    ) 9> "$LOCK"
+}
+
+# ---------------------------------------------------------------- check
+
+# <option> <default> - an integer straight out of uci, without config_load
+setting() {
+    local v
+    v=$(uci -q get "podkop-sub.settings.$1")
+    case "$v" in '' | *[!0-9]*) printf '%s' "$2" ;; *) printf '%s' "$v" ;; esac
+}
+
+# the clash API answers only while podkop and sing-box are both up
+clash_up() {
+    "$PODKOP" clash_api get_proxies 2> /dev/null | jq -e 'has("proxies")' > /dev/null 2>&1
+}
+
+# one field of a section's state, empty when it was never written
+sec_state() { state_json | jq -r --arg s "$1" --arg k "$2" '.sections[$s][$k] // ""'; }
+
+# sets PING_MS; a tag podkop never wrote answers "Resource not found", which is not a delay
+ping_node() {
+    local d
+    PING_MS=''
+    d=$("$PODKOP" clash_api get_proxy_latency "$1-$2-out" "$3" 2> /dev/null |
+        jq -r '.delay // 0' 2> /dev/null)
+    case "$d" in '' | *[!0-9]*) return 1 ;; esac
+    [ "$d" -gt 0 ] || return 1
+    PING_MS=$d
+}
+
+# <links file> <node name> - its 1-based position, which is podkop's <section>-<i>-out index
+link_index() {
+    local i=0 l
+    [ -n "$2" ] || {
+        printf '0'
+        return 0
+    }
+    while IFS= read -r l; do
+        i=$((i + 1))
+        if [ "$(link_name "$l")" = "$2" ]; then
+            printf '%s' "$i"
+            return 0
+        fi
+    done < "$1"
+    printf '0'
+}
+
+# the node index the selector points at; 0 for a urltest group, direct-out or nothing
+selector_index() {
+    local now i
+    now=$("$PODKOP" clash_api get_proxies 2> /dev/null |
+        jq -r --arg g "$1-out" '.proxies[$g].now // ""' 2> /dev/null)
+    i=${now#"$1"-}
+    i=${i%-out}
+    case "$i" in '' | *[!0-9]*) printf '0' ;; *) printf '%s' "$i" ;; esac
+}
+
+# <count> <index to try first> <index to try last> - every index once, 0 meaning no preference
+probe_order() {
+    local i=1
+    [ "$2" -ge 1 ] && [ "$2" -le "$1" ] && [ "$2" != "$3" ] && printf '%s ' "$2"
+    while [ "$i" -le "$1" ]; do
+        [ "$i" = "$2" ] || [ "$i" = "$3" ] || printf '%s ' "$i"
+        i=$((i + 1))
+    done
+    [ "$3" -ge 1 ] && [ "$3" -le "$1" ] && printf '%s ' "$3"
+    return 0
+}
+
+# <section> <links file> <timeout> <max failures> <index...> - sets PROBE_WIN and PROBE_TRIED
+probe_indexes() {
+    local s="$1" f="$2" to="$3" maxf="$4" i name
+    shift 4
+    PROBE_WIN=0
+    PROBE_TRIED=0
+    for i in "$@"; do
+        name=$(link_name "$(sed -n "${i}p" "$f")")
+        PROBE_TRIED=$((PROBE_TRIED + 1))
+        if ping_node "$s" "$i" "$to"; then
+            log "$s: $(safe_name "$name") answered in $PING_MS ms"
+            PROBE_WIN=$i
+            return 0
+        fi
+        log "$s: $(safe_name "$name") did not answer"
+        [ "$PROBE_TRIED" -lt "$maxf" ] || break
+    done
+    return 1
+}
+
+mark_section() {
+    state_apply --arg s "$1" --arg st "$2" --argjson f "$3" --argjson t "$(date +%s)" \
+        '.sections[$s] = ((.sections[$s] // {}) + {status: $st, fails: $f, checked: $t})
+         | if (.sections[$s] | '"$HEALTH"') == "ok" then del(.sections[$s].health_ack) else . end'
+}
+
+forget_failover() { state_apply --arg s "$1" 'del(.sections[$s].failover)'; }
+
+# move the selector ourselves, and record that this node is ours and not the user's choice
+select_node() {
+    local s="$1" i="$2" name="$3"
+    "$PODKOP" clash_api set_group_proxy "$s-out" "$s-$i-out" > /dev/null 2>&1 || {
+        log "$s: could not switch to $(safe_name "$name")"
+        return 1
+    }
+    log "$s: switched to $(safe_name "$name")"
+    state_apply --arg s "$s" --arg n "$name" \
+        '.sections[$s] = ((.sections[$s] // {}) + {failover: $n})'
+}
+
+sub_id_if_targets() {
+    local sec="$1" want="$2" en url secs x
+    config_get_bool en "$sec" enabled 1
+    [ "$en" = 1 ] || return 0
+    config_get url "$sec" url
+    [ -n "$url" ] || return 0
+    config_get secs "$sec" sections
+    for x in $secs; do
+        [ "$x" = "$want" ] && printf '%s\n' "$(sub_id "$url")" && return 0
+    done
+    return 0
+}
+
+section_subs() { config_foreach sub_id_if_targets subscription "$1"; }
+
+# <link> <seconds> - is there a TCP socket at the endpoint? 2 when the link cannot be probed.
+# curl's exit code cannot answer this: a server that accepts the connection and then stays silent
+# times out with 28, exactly like one that was never reachable. time_connect separates them - it is
+# zero only when the handshake itself never completed. A silent socket is what a VLESS endpoint
+# looks like when curl speaks MQTT at it, so this is the common case, not an edge one.
+tcp_up() {
+    local hp t
+    # hy2/hysteria2 are UDP: there is nothing to connect to, and "cannot tell" is not "dead"
+    case "$1" in hy2://* | hysteria2://*) return 2 ;; esac
+    hp=$(link_hostport "$1")
+    case "$hp" in *:*) ;; *) return 2 ;; esac
+    # mqtt:// is the cheapest plain-TCP scheme this curl has: telnet:// is not compiled in
+    t=$(curl -sk -o /dev/null -w '%{time_connect}' \
+        --connect-timeout "$2" --max-time "$(($2 + 1))" "mqtt://$hp" 2> /dev/null)
+    # any non-zero digit means the connect completed, whatever separator the build prints
+    case "$(printf '%s' "$t" | tr -dc '0-9')" in
+        *[1-9]*) return 0 ;;
+    esac
+    return 1
+}
+
+# the first node the section's subscriptions offer that it does not carry and that TCP answers
+emergency_link() {
+    local s="$1" f="$2" id l secs
+    secs=$((($(setting ping_timeout 2000) + 999) / 1000))
+    [ "$secs" -ge 1 ] || secs=1
+    for id in $(section_subs "$s"); do
+        [ -s "$CACHE_DIR/$id.lst" ] || continue
+        while IFS= read -r l; do
+            grep -Fxq "$l" "$f" && continue
+            tcp_up "$l" "$secs"
+            case "$?" in
+                0)
+                    printf '%s\n' "$l"
+                    return 0
+                    ;;
+                # our stdout is the link the caller captures, so these lines go to stderr
+                2) log "$s: $(safe_name "$(link_name "$l")") cannot be probed, skipping it" >&2 ;;
+                *) log "$s: $(safe_name "$(link_name "$l")") is not reachable, skipping it" >&2 ;;
+            esac
+        done < "$CACHE_DIR/$id.lst"
+    done
+    return 1
+}
+
+# every chosen node is dead: borrow one the user did not pick, and let apply write it in
+add_emergency() {
+    local s="$1" f="$2" link name
+    link=$(emergency_link "$s" "$f")
+    [ -n "$link" ] || {
+        log "$s: the subscription offers nothing else, leaving the section as it is"
+        return 1
+    }
+    name=$(link_name "$link")
+    log "$s: every node is dead, borrowing $(safe_name "$name") from the subscription"
+    state_apply --arg s "$s" --arg n "$name" --arg l "$link" \
+        '.sections[$s] = ((.sections[$s] // {}) + {added: $n, added_link: $l})' || return 1
+    # a uci commit and a podkop restart: once per check pass, never in a loop
+    CHECK_ADDED=1
+    cmd_apply
+    wait_for_group "$s" "$RESTORE_WAIT"
+}
+
+# a chosen node answers again: the section goes back to the user's selection alone
+drop_emergency() {
+    local s="$1" name="$2"
+    log "$s: $(safe_name "$name") is not needed any more, dropping it from the section"
+    state_apply --arg s "$s" 'del(.sections[$s].added, .sections[$s].added_link)' || return 1
+    cmd_apply
+    wait_for_group "$s" "$RESTORE_WAIT"
+}
+
+# <section> <its links> - nothing in the section answers, so re-read the subscriptions feeding
+# it and apply. 1 when the links did not change: the same list is still the same dead nodes.
+refresh_section() {
+    local s="$1" id
+    log "$s: nothing answered, re-reading the subscriptions"
+    for id in $(section_subs "$s"); do
+        cmd_update "$id"
+    done
+    cmd_apply
+    [ "$(current_links "$s")" != "$(cat "$2")" ] || return 1
+    wait_for_group "$s" "$RESTORE_WAIT" || log "$s: podkop's proxy groups did not come back"
+}
+
+# probe the node that carries the traffic, fail over when it dies, come back when it revives
+check_section() {
+    local s="$1" to="$2" maxf="$3" again="${4:-}"
+    local f n mode sel fail add add_i fail_i sel_i now order name win
+    if ! uci -q get "podkop.$s" > /dev/null 2>&1; then
+        log "section $s is gone from podkop, dropping it"
+        forget_section "$s"
+        return 0
+    fi
+    f="$CHECKTMP/links.$s"
+    current_links "$s" > "$f"
+    n=$(wc -l < "$f" | tr -d ' ')
+    if [ "$n" -eq 0 ]; then
+        log "$s: podkop has no links for this section"
+        mark_section "$s" fail 0
+        return 0
+    fi
+    # a pass no longer applies, and the apply is where the user's own pick used to be noticed
+    remember_choice "$s"
+    mode=$(section_mode "$s")
+    sel=$(sec_state "$s" selected)
+    fail=$(sec_state "$s" failover)
+    add=$(sec_state "$s" added)
+    add_i=$(link_index "$f" "$add")
+    fail_i=$(link_index "$f" "$fail")
+    sel_i=$(link_index "$f" "$sel")
+    now=0
+    [ "$mode" = selector ] && now=$(selector_index "$s")
+    # a failover lasts only while the selector still sits on it; anything that moved it ended it
+    if [ -n "$fail" ] && [ "$fail_i" -eq 0 ]; then
+        forget_failover "$s"
+        fail=''
+    elif [ -n "$fail" ] && [ "$now" -gt 0 ] && [ "$now" != "$fail_i" ]; then
+        log "$s: the selector left $(safe_name "$fail"), that failover is over"
+        forget_failover "$s"
+        fail=''
+        fail_i=0
+    fi
+
+    # while the selector sits where we put it, the user's own nodes are what the probe is for
+    if [ "$mode" = selector ] && [ "$fail_i" -gt 0 ]; then
+        order=$(probe_order "$n" "$sel_i" "$fail_i")
+    elif [ "$mode" != selector ] && [ "$add_i" -gt 0 ]; then
+        order=$(probe_order "$n" 0 "$add_i")
+    elif [ "$mode" = selector ]; then
+        order=$(probe_order "$n" "$now" 0)
+    else
+        # a urltest section picks for itself; there is no "current" node to start from
+        order=$(probe_order "$n" "$(awk -v n="$n" 'BEGIN { srand(); print int(rand() * n) + 1 }')" 0)
+    fi
+
+    # shellcheck disable=SC2086 # the order is a list of indexes: word splitting is the point
+    if ! probe_indexes "$s" "$f" "$to" "$maxf" $order; then
+        log "$s: no node answered ($PROBE_TRIED of $n tried)"
+        # only a section with nothing left to run on is worth a fetch and podkop's restart
+        if [ -z "$again" ] && [ "$PROBE_TRIED" -ge "$n" ] && refresh_section "$s" "$f"; then
+            check_section "$s" "$to" "$maxf" 1
+            return 0
+        fi
+        if [ "$PROBE_TRIED" -ge "$n" ] && [ -z "$CHECK_ADDED" ] && add_emergency "$s" "$f"; then
+            current_links "$s" > "$f"
+            add=$(sec_state "$s" added)
+            add_i=$(link_index "$f" "$add")
+            if [ "$add_i" -gt 0 ]; then
+                probe_indexes "$s" "$f" "$to" 1 "$add_i"
+                [ "$mode" = selector ] && select_node "$s" "$add_i" "$add"
+                if [ "$PROBE_WIN" -gt 0 ]; then
+                    mark_section "$s" ok 0
+                    return 0
+                fi
+            fi
+        fi
+        mark_section "$s" fail "$PROBE_TRIED"
+        return 0
+    fi
+
+    win=$PROBE_WIN
+    name=$(link_name "$(sed -n "${win}p" "$f")")
+    # every link but the borrowed one is the user's, so a win elsewhere means his side is back
+    if [ -n "$add" ] && [ "$win" != "$add_i" ]; then
+        drop_emergency "$s" "$add"
+        current_links "$s" > "$f"
+        win=$(link_index "$f" "$name")
+        now=0
+        [ "$mode" = selector ] && now=$(selector_index "$s")
+    fi
+    if [ "$mode" = selector ] && [ "$win" -gt 0 ] && [ "$win" != "$now" ]; then
+        if [ "$name" = "$sel" ]; then
+            "$PODKOP" clash_api set_group_proxy "$s-out" "$s-$win-out" > /dev/null 2>&1 ||
+                log "$s: could not switch to $(safe_name "$name")"
+        else
+            select_node "$s" "$win" "$name"
+        fi
+    fi
+    # the recovery is reported where the failover is dropped, not where the selector is moved
+    if [ "$name" = "$sel" ] && [ -n "$fail" ]; then
+        log "$s: $(safe_name "$name") answers again, the selector is back on it"
+        forget_failover "$s"
+    fi
+    mark_section "$s" ok 0
+    return 0
+}
+
+cmd_check() {
+    local timeout maxf s
+    if ! clash_up; then
+        log "podkop is not answering, skipping the check"
+        return 0
+    fi
+    timeout=$(setting ping_timeout 2000)
+    maxf=$(setting max_failures 5)
+    [ "$maxf" -ge 1 ] || maxf=1
+    CHECK_ADDED=''
+    CHECKTMP=$(mktemp -d) || return 1
+    # a pass only probes; a section left with nothing to run on re-reads its own subscriptions
+    # every apply from here restores the selector inline, so no probe lands during the restart
+    PODKOP_SUB_SYNC=1
+    for s in $(state_json | jq -r '.sections | keys[]?'); do
+        check_section "$s" "$timeout" "$maxf"
+    done
+    rm -rf "$CHECKTMP"
+    return 0
+}
+
+# ---------------------------------------------------------------- daemon
+
+DAEMON_STOP=0
+
+# ash finishes a plain `sleep` before handling a signal, so wait on it instead
+nap() {
+    local pid
+    [ "$DAEMON_STOP" = 0 ] || return 0
+    sleep "$1" &
+    pid=$!
+    wait "$pid"
+    kill "$pid" 2> /dev/null
+    return 0
+}
+
+cmd_daemon() {
+    local interval
+    trap 'DAEMON_STOP=1' TERM INT
+    log "daemon started"
+    # let podkop and sing-box finish booting before the first check
+    nap 60
+    while [ "$DAEMON_STOP" = 0 ]; do
+        config_load podkop-sub
+        cmd_check
+        [ "$DAEMON_STOP" = 0 ] || break
+        interval=$(setting check_interval 60)
+        [ "$interval" -ge 1 ] || interval=60
+        nap $((interval * 60))
+    done
+    log "daemon stopped"
+    return 0
+}
+
+# ---------------------------------------------------------------- status
+
+podkop_version() {
+    local v
+    v=$("$PODKOP" show_version 2> /dev/null | head -n 1 | tr -d '\r')
+    printf '%s' "${v#v}"
+}
+
+# there is no `enabled` option in the config on purpose: the service state is the switch
+svc_state() {
+    if [ -x "$INIT" ] && "$INIT" "$1" > /dev/null 2>&1; then echo true; else echo false; fi
+}
+
+status_sub() {
+    local sec="$1" dir="$2" url name id en secs s names
+    config_get url "$sec" url
+    [ -n "$url" ] || return 0
+    config_get name "$sec" name
+    id=$(sub_id "$url")
+    names="$dir/nodes.$id"
+    sub_names "$id" > "$names"
+    state_json | jq -c --arg id "$id" --arg url "$url" --arg name "$name" \
+        --rawfile nodes "$names" '
+        (.subs[$id] // {}) as $s |
+        {id: $id, url: $url, name: $name,
+         count: ($s.count // 0), skipped: ($s.skipped // 0), updated: ($s.updated // 0),
+         status: ($s.status // "never"), error: ($s.error // ""),
+         expire: ($s.expire // 0), traffic_left: ($s.traffic_left // 0),
+         nodes: ($nodes | split("\n") | map(select(length > 0))),
+         missing: (if ($s.missing_ack // false) then [] else ($s.missing // []) end)}' >> "$dir/subs"
+    config_get_bool en "$sec" enabled 1
+    [ "$en" = 1 ] || return 0
+    config_get secs "$sec" sections
+    for s in $secs; do printf '%s\n' "$s" >> "$dir/names"; done
+}
+
+cmd_status() {
+    local dir s st
+    dir=$(mktemp -d) || return 1
+    : > "$dir/subs"
+    : > "$dir/secs"
+    : > "$dir/names"
+    config_foreach status_sub subscription "$dir"
+    st=$(state_json)
+    awk '!seen[$0]++' "$dir/names" | while IFS= read -r s; do
+        [ -n "$s" ] || continue
+        uci -q get "podkop.$s" > /dev/null 2>&1 || continue
+        printf '%s' "$st" | jq -c --arg s "$s" --arg m "$(section_mode "$s")" '
+            (.sections[$s] // {}) as $x |
+            ($x | '"$HEALTH"') as $h |
+            {name: $s, mode: $m, links: ($x.links // 0),
+             checked: ($x.checked // 0),
+             status: (if $m == "" then "no-mode" else ($x.status // "stale") end),
+             selected: ($x.selected // ""), fails: ($x.fails // 0),
+             failover: ($x.failover // ""), added: ($x.added // ""),
+             health: (if $h == ($x.health_ack // "") then "ok" else $h end)}' >> "$dir/secs"
+    done
+    jq -n --slurpfile subs "$dir/subs" --slurpfile sections "$dir/secs" \
+        --arg version "$PLUGIN_VERSION" --arg pv "$(podkop_version)" \
+        --arg tp "$TARGET_PODKOP" \
+        --argjson running "$(svc_state running)" --argjson enabled "$(svc_state enabled)" \
+        '{version: $version, podkop_version: $pv, target_podkop: $tp,
+          subs: $subs, sections: $sections,
+          service: {running: $running, enabled: $enabled}}'
+    rm -rf "$dir"
+}
+
+# ---------------------------------------------------------------- cli
+
+usage() {
+    cat << EOF
+usage: podkop-sub <command>
+  update [--all|<sub_id>] [--force]   download subscriptions into the cache
+  apply [--force]                     write the cached links into podkop's sections
+  check                               ping the managed sections, refresh the dead ones
+  daemon                              check loop for /etc/init.d/podkop-sub, not for hand use
+  restore [<section>]                 put podkop's sections back as they were
+  restore-nodes <dir>                 internal: the selector restore apply detaches
+  ack <sub_id>                        stop warning about the nodes that vanished
+  ack-section <section>               stop warning about that section's current state
+  status                              current state as JSON
+  logs [--clear]                      print the debug log, or empty it
+  version                             plugin version
+EOF
+}
+
+main() {
+    mkdir -p "$CACHE_DIR" "$BACKUP_DIR" "$(dirname "$LOCK")"
+    # the cache and the state hold subscription URLs and proxy links: root only
+    chmod 0700 "$(dirname "$STATE")" "$CACHE_DIR" "$BACKUP_DIR" 2> /dev/null
+    chmod 0600 /etc/config/podkop-sub 2> /dev/null
+    case "${1:-}" in
+        update)
+            shift
+            cmd_update "$@"
+            ;;
+        apply)
+            shift
+            cmd_apply "$@"
+            ;;
+        check) cmd_check ;;
+        daemon) cmd_daemon ;;
+        restore)
+            shift
+            cmd_restore "$@"
+            ;;
+        restore-nodes)
+            shift
+            cmd_restore_nodes "$@"
+            ;;
+        ack)
+            shift
+            cmd_ack "$@"
+            ;;
+        ack-section)
+            shift
+            cmd_ack_section "$@"
+            ;;
+        status) cmd_status ;;
+        logs)
+            shift
+            cmd_logs "$@"
+            ;;
+        version) echo "$PLUGIN_VERSION" ;;
+        *)
+            usage
+            exit 1
+            ;;
+    esac
+}
+
+[ -n "$PODKOP_SUB_TEST" ] || main "$@"
