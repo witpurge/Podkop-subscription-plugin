@@ -18,9 +18,10 @@ LOG_MAX=65536
 DEFAULT_UA='v2rayNG/1.9.0'
 # podkop cannot build a vmess outbound, so vmess:// lines are skipped, not supported
 SUPPORTED_SCHEMES='vless ss trojan hy2 hysteria2 socks socks4 socks5'
-# ~3 minutes for the proxy groups to come back; both env hooks exist only for the tests
+# ~3 minutes for the proxy groups to come back; the env hook exists only for the tests
 RESTORE_WAIT=${PODKOP_SUB_WAIT:-90}
-PODKOP_SUB_SYNC=${PODKOP_SUB_SYNC:-}
+# an apply the core makes for itself keeps what it knows; only the user's own apply clears it
+APPLY_KEEP=1
 
 # shellcheck source=/dev/null
 [ -r /usr/share/podkop-sub/version ] && . /usr/share/podkop-sub/version
@@ -438,6 +439,7 @@ forget_section() {
 # remember which node the selector points at, by name, before the list is overwritten
 remember_choice() {
     local s="$1" i link name
+    [ "$(section_mode "$s")" = selector ] || return 0
     i=$(selector_index "$s")
     [ "$i" -gt 0 ] || return 0
     link=$(current_links "$s" | sed -n "${i}p")
@@ -452,7 +454,11 @@ remember_choice() {
 write_section() {
     local s="$1" f="$2" mode list other l
     backup_section "$s"
-    remember_choice "$s"
+    if [ -n "$APPLY_KEEP" ]; then
+        remember_choice "$s"
+    else
+        forget_choice "$s"
+    fi
     mode=$(section_mode "$s")
     if [ "$mode" = urltest ]; then
         list=urltest_proxy_links
@@ -506,7 +512,7 @@ restore_choice() {
     needs_restore "$s" || return 0
     want=$(restore_target "$s")
 
-    # the long wait already happened once in cmd_restore_nodes; this is only the per-group tail
+    # the long wait already happened once in restore_nodes; this is only the per-group tail
     wait_for_group "$s" 5 || {
         log "$s: proxy group did not come back, keeping podkop's default"
         return 0
@@ -518,8 +524,8 @@ restore_choice() {
         log "$s: could not select $s-$n-out"
 }
 
-# internal: apply detaches this, so <dir> is ours to read and to remove. Reads only, takes no lock.
-cmd_restore_nodes() {
+# apply hands over <dir>, which is ours to read and to remove
+restore_nodes() {
     local dir="${1:-}" f s found='' waited=''
     [ -n "$dir" ] && [ -d "$dir" ] || return 1
     for f in "$dir"/sec.*; do
@@ -618,14 +624,11 @@ apply_locked() {
                               {mode: $m, links: $n, status: "ok", applied: $t})'
     done
 
-    # the restore waits minutes for sing-box while LuCI gives an rpc call 20 s, so it outlives us
+    # his apply forgets, so only our own ever waits for sing-box behind LuCI's 20 s rpc
     if [ -z "$pending" ]; then
         rm -rf "$RUNTMP"
-    elif [ -n "$PODKOP_SUB_SYNC" ]; then
-        cmd_restore_nodes "$RUNTMP"
     else
-        # rpcd reads stdout to EOF, and fd 9 is our lock: the child must hold neither
-        "$0" restore-nodes "$RUNTMP" > /dev/null 2>&1 9>&- &
+        restore_nodes "$RUNTMP"
     fi
     return 0
 }
@@ -767,6 +770,9 @@ mark_section() {
 
 forget_failover() { state_apply --arg s "$1" 'del(.sections[$s].failover)'; }
 
+# a save & apply is the user redoing his choice, so what we knew about the old one is void
+forget_choice() { state_apply --arg s "$1" 'del(.sections[$s].selected, .sections[$s].failover)'; }
+
 # move the selector ourselves, and record that this node is ours and not the user's choice
 select_node() {
     local s="$1" i="$2" name="$3"
@@ -896,7 +902,13 @@ check_section() {
         mark_section "$s" fail 0
         return 0
     fi
-    # a pass no longer applies, and the apply is where the user's own pick used to be noticed
+    # a pick that is no longer in the section can never answer again, so it is not a pick
+    sel=$(sec_state "$s" selected)
+    if [ -n "$sel" ] && [ "$(link_index "$f" "$sel")" -eq 0 ]; then
+        log "$s: $(safe_name "$sel") is not in this section any more, forgetting it"
+        forget_choice "$s"
+    fi
+    # no apply happens in a healthy pass, so this is the only place his pick is ever learned
     remember_choice "$s"
     mode=$(section_mode "$s")
     sel=$(sec_state "$s" selected)
@@ -994,8 +1006,6 @@ cmd_check() {
     CHECK_ADDED=''
     CHECKTMP=$(mktemp -d) || return 1
     # a pass only probes; a section left with nothing to run on re-reads its own subscriptions
-    # every apply from here restores the selector inline, so no probe lands during the restart
-    PODKOP_SUB_SYNC=1
     for s in $(state_json | jq -r '.sections | keys[]?'); do
         check_section "$s" "$timeout" "$maxf"
     done
@@ -1113,7 +1123,6 @@ usage: podkop-sub <command>
   check                               ping the managed sections, refresh the dead ones
   daemon                              check loop for /etc/init.d/podkop-sub, not for hand use
   restore [<section>]                 put podkop's sections back as they were
-  restore-nodes <dir>                 internal: the selector restore apply detaches
   ack <sub_id>                        stop warning about the nodes that vanished
   ack-section <section>               stop warning about that section's current state
   status                              current state as JSON
@@ -1134,6 +1143,8 @@ main() {
             ;;
         apply)
             shift
+            # what he saved is the truth now: his old pick and our failover both go
+            APPLY_KEEP=''
             cmd_apply "$@"
             ;;
         check) cmd_check ;;
@@ -1141,10 +1152,6 @@ main() {
         restore)
             shift
             cmd_restore "$@"
-            ;;
-        restore-nodes)
-            shift
-            cmd_restore_nodes "$@"
             ;;
         ack)
             shift

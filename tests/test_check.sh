@@ -13,10 +13,6 @@ MOCK_TCP_DEAD=''
 MOCK_TCP_SILENT=''
 export MOCK_FIXTURE_DIR MOCK_CALLS MOCK_PROXIES MOCK_DEAD MOCK_TCP_DEAD MOCK_TCP_SILENT
 
-# the shipped apply detaches the selector restore; inline here so assertions cannot race the child
-PODKOP_SUB_SYNC=1
-export PODKOP_SUB_SYNC
-
 STATE=/etc/podkop-sub/state.json
 LOG=/tmp/podkop-sub.log
 
@@ -102,16 +98,7 @@ assert_eq "$NL" "$(sec main failover)" "the emergency pick is recorded as ours"
 assert_eq "$DE" "$(sec main selected)" "the user's own pick is left untouched"
 assert_eq "ok" "$(sec main status)" "a section that failed over is ok, not failed"
 
-# an apply restarts podkop, and the selector must come back to our node, not to the dead pick
-: > "$MOCK_CALLS"
-podkop-sub apply --force > /dev/null 2>&1
-assert_eq "main-1-out" "$(now_at)" "an apply during a failover leaves the selector on our node"
-assert_eq "" "$(grep -F 'set_group_proxy main-out main-3-out' "$MOCK_CALLS")" \
-    "the node that is not answering is never restored"
-assert_eq "$NL" "$(sec main failover)" "the failover survives the apply"
-assert_eq "$DE" "$(sec main selected)" "and so does the user's own pick"
-
-# our own pick must not be adopted as his when the next pass applies
+# our own pick must not be adopted as his by a later pass
 : > "$MOCK_CALLS"
 podkop-sub check > /dev/null 2>&1
 assert_eq "$DE" "$(sec main selected)" "a second pass still does not adopt our pick as his"
@@ -156,6 +143,8 @@ assert_cmd "a third node under the selector ends the failover too" \
     grep -qF "main: the selector left $NL, that failover is over" "$LOG"
 assert_contains "$(grep answer "$LOG" | head -n 1)" "$N2_LOG" \
     "with the failover gone, the node the selector really sits on is probed first"
+# moving the selector by hand is how the user changes his mind, so that node becomes his pick
+assert_eq "$N2" "$(sec main selected)" "a node the user parked the selector on becomes his pick"
 MOCK_DEAD=''
 
 # ---------------------------------------------------------------- every chosen node dead
@@ -168,7 +157,7 @@ uci commit podkop-sub
 podkop-sub update --all > /dev/null 2>&1
 podkop-sub apply > /dev/null 2>&1
 assert_eq "2" "$(links_of main | wc -l | tr -d ' ')" "main carries only the two chosen nodes"
-assert_eq "$NL" "$(sec main selected)" "his pick is remembered before anything goes wrong"
+assert_eq "" "$(sec main selected)" "his own apply leaves nothing remembered behind it"
 
 : > "$MOCK_CALLS"
 : > "$LOG"
@@ -440,5 +429,40 @@ assert_eq "" "$(grep -F 'is not reachable' "$LOG")" \
 assert_cmd "it is borrowed like any other live node" \
     grep -qF "main: every node is dead, borrowing $N2_LOG from the subscription" "$LOG"
 assert_eq "$N2" "$(sec main added)" "and it is the node that ends up in the section"
+
+# ------------------------------------------------- the pick the user dropped from his node list
+
+# he failed over to NL, then deselected DE entirely: a save & apply is him redoing his choice,
+# so nothing of the old one survives it and the next pass adopts whatever runs now
+reset main-3-out
+MOCK_DEAD='main-3-out'
+podkop-sub check > /dev/null 2>&1
+assert_eq "$DE" "$(sec main selected)" "the failover starts from his pick"
+assert_eq "$NL" "$(sec main failover)" "with our own node carrying the traffic"
+
+uci add_list "podkop-sub.@subscription[0].nodes=$NL"
+uci add_list "podkop-sub.@subscription[0].nodes=$N2"
+uci commit podkop-sub
+podkop-sub update --all > /dev/null 2>&1
+: > "$MOCK_CALLS"
+podkop-sub apply > /dev/null 2>&1
+assert_eq "" "$(grep -F 'set_group_proxy main-out main-3-out' "$MOCK_CALLS")" \
+    "his apply never puts the selector back on the pick that died"
+assert_eq "" "$(sec main selected)" "a save & apply forgets the pick he had"
+assert_eq "" "$(sec main failover)" "and the failover that was standing in for it"
+
+MOCK_DEAD=''
+podkop-sub check > /dev/null 2>&1
+assert_eq "$NL" "$(sec main selected)" "the next pass takes the node that runs now as his pick"
+assert_eq "ok" "$(st main health)" "so the page stops warning about a node he removed himself"
+assert_eq "" "$(sec media selected)" "a urltest section keeps no pick at all, it picks the fastest"
+
+# the subscription dropping a node leaves the same dangling pick, without an apply to clear it
+jq '.sections.main.selected = "a node that left"' "$STATE" > /tmp/state.new && mv /tmp/state.new "$STATE"
+: > "$LOG"
+podkop-sub check > /dev/null 2>&1
+assert_cmd "a pick the section no longer carries is forgotten on the spot" \
+    grep -qF "main: a node that left is not in this section any more, forgetting it" "$LOG"
+assert_eq "$NL" "$(sec main selected)" "and the node under the selector takes its place"
 
 test_summary

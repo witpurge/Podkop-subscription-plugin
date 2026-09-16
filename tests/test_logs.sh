@@ -11,10 +11,6 @@ MOCK_PROXIES=/tmp/mock-proxies-logs.json
 MOCK_HEADERS='Subscription-Userinfo: upload=100; download=200; total=1000; expire=2218276800'
 export MOCK_FIXTURE_DIR MOCK_CALLS MOCK_PROXIES MOCK_HEADERS
 
-# the shipped apply detaches the selector restore; inline here so assertions cannot race the child
-PODKOP_SUB_SYNC=1
-export PODKOP_SUB_SYNC
-
 LOGFILE=/tmp/podkop-sub.log
 LOG_MAX=65536
 STAMP='^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9] '

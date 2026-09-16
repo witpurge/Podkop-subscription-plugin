@@ -11,10 +11,6 @@ MOCK_PROXIES=/tmp/mock-proxies.json
 MOCK_HEADERS=''
 export MOCK_FIXTURE_DIR MOCK_CALLS MOCK_PROXIES MOCK_HEADERS
 
-# the shipped apply detaches the selector restore; inline here so assertions cannot race the child
-PODKOP_SUB_SYNC=1
-export PODKOP_SUB_SYNC
-
 # plain.txt in fetch order: 1 NL, 2 the ss link with no fragment, 3 DE
 NL='🇳🇱 NL 01 Amsterdam'
 DE='🇩🇪 DE Frankfurt'

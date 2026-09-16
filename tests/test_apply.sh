@@ -13,10 +13,6 @@ MOCK_PROXIES=/tmp/mock-proxies.json
 MOCK_HEADERS='Subscription-Userinfo: upload=100; download=200; total=1000; expire=2218276800'
 export MOCK_FIXTURE_DIR MOCK_CALLS MOCK_PROXIES MOCK_HEADERS
 
-# the shipped apply detaches the selector restore; inline here so assertions cannot race the child
-PODKOP_SUB_SYNC=1
-export PODKOP_SUB_SYNC
-
 reset() {
     uci -q revert podkop
     rm -rf /etc/podkop-sub
@@ -114,9 +110,10 @@ assert_contains "$out" "no changes" "a second apply reports no changes"
 assert_eq "" "$(uci changes podkop)" "a second apply leaves no uncommitted uci changes"
 assert_eq "" "$(grep 'podkop-init restart' "$MOCK_CALLS")" "a second apply does not restart podkop"
 
-# ---------------------------------------------------------------- selector choice
+# ---------------------------------------------------------------- the user's own apply forgets
 
-# main-4-out is the second subscription's first link; after the swap it must come back as main-1-out
+# he saved, so the state he saved is the truth: we keep nothing about the node he ran on before
+# and move no selector of our own, whatever the subscription did to the order of the list
 echo '{"proxies":{"main-out":{"now":"main-4-out"},"media-out":{"now":"media-urltest-out"}}}' \
     > "$MOCK_PROXIES"
 MOCK_BODY_plain=alt
@@ -125,21 +122,20 @@ export MOCK_BODY_plain MOCK_BODY_alt
 podkop-sub update --all > /dev/null 2>&1
 : > "$MOCK_CALLS"
 podkop-sub apply > /dev/null 2>&1
-assert_eq "🇫🇮 FI Helsinki" "$(jq -r '.sections.main.selected' /etc/podkop-sub/state.json)" \
-    "the selector choice was remembered by name"
-assert_contains "$(cat "$MOCK_CALLS")" "clash_api set_group_proxy main-out main-1-out" \
-    "the choice is restored at its new index"
-assert_eq "" "$(grep 'set_group_proxy media-out' "$MOCK_CALLS")" \
-    "a urltest section gets no set_group_proxy"
+assert_eq "false" "$(jq '.sections.main | has("selected")' /etc/podkop-sub/state.json)" \
+    "his apply leaves no pick remembered"
+assert_eq "" "$(grep set_group_proxy "$MOCK_CALLS")" \
+    "and puts the selector nowhere: podkop's own default is where he starts from"
 
-# the remembered name is no longer in the list
-echo '{"proxies":{"main-out":{},"media-out":{}}}' > "$MOCK_PROXIES"
-jq '.sections.main.selected = "gone"' /etc/podkop-sub/state.json > /tmp/state.json &&
+# a failover of ours does not survive it either
+jq '.sections.main.failover = "🇫🇮 FI Helsinki"' /etc/podkop-sub/state.json > /tmp/state.json &&
     mv /tmp/state.json /etc/podkop-sub/state.json
 : > "$MOCK_CALLS"
 podkop-sub apply --force > /dev/null 2>&1
+assert_eq "false" "$(jq '.sections.main | has("failover")' /etc/podkop-sub/state.json)" \
+    "the failover is forgotten by his apply"
 assert_eq "" "$(grep set_group_proxy "$MOCK_CALLS")" \
-    "a name that is gone from the list produces no set_group_proxy"
+    "so there is nothing left for it to restore"
 
 # ---------------------------------------------------------------- restore
 
@@ -196,19 +192,15 @@ assert_eq "" "$(jq -r '.sections[]|select(.name=="media")|.mode' /tmp/status.jso
 assert_eq "$(target_podkop)" "$(jq -r .target_podkop /tmp/status.json)" \
     "status carries the podkop version the plugin was built for"
 
-# ---------------------------------------------------------------- the restore is detached
+# ------------------------------------------------------------- his apply never waits for podkop
 
-# the real path, without PODKOP_SUB_SYNC: the clash api is down, so the restore waits and times out
+# LuCI gives an rpc call 20 s and sing-box needs minutes to come back. His apply has nothing to put
+# back, so it must not reach the restore window even with the clash api down.
 reset
 podkop-sub update --all > /dev/null 2>&1
 podkop-sub apply > /dev/null 2>&1
-podkop-sub apply --force > /dev/null 2>&1
-assert_eq "true" "$(jq '.sections.main | has("selected")' /etc/podkop-sub/state.json)" \
-    "a selector choice is remembered, so the restore has work to do"
-
-unset PODKOP_SUB_SYNC
 MOCK_PODKOP_DOWN=1
-PODKOP_SUB_WAIT=1
+PODKOP_SUB_WAIT=10
 export MOCK_PODKOP_DOWN PODKOP_SUB_WAIT
 : > "$MOCK_CALLS"
 : > /tmp/podkop-sub.log
@@ -216,26 +208,16 @@ t0=$(date +%s)
 podkop-sub apply --force > /dev/null 2>&1
 rc=$?
 elapsed=$(($(date +%s) - t0))
-# from here on, anything in $MOCK_CALLS was done after apply had already returned
-: > "$MOCK_CALLS"
 assert_eq "0" "$rc" "apply exits 0 with the clash api down"
-assert_cmd "apply returns in seconds, not after the restore window" test "$elapsed" -lt 5
+assert_cmd "apply returns at once, never into the restore window" test "$elapsed" -lt 5
 assert_eq "" "$(grep 'did not come back' /tmp/podkop-sub.log)" \
-    "the restore has not finished when apply returns"
+    "it waited for no proxy group"
+assert_eq "" "$(grep 'clash_api get_proxies' "$MOCK_CALLS")" \
+    "and never asked podkop whether they were back"
 
 out=$(podkop-sub apply 2>&1)
-assert_eq "0" "$?" "a second apply is not blocked by the detached child"
-assert_contains "$out" "no changes" "the child holds no lock"
-
-waited=0
-while [ "$waited" -lt 30 ] && ! grep -q 'did not come back' /tmp/podkop-sub.log; do
-    waited=$((waited + 1))
-    sleep 1
-done
-assert_contains "$(cat /tmp/podkop-sub.log)" "main: proxy group did not come back" \
-    "the detached restore logs its timeout after apply has returned"
-assert_contains "$(cat "$MOCK_CALLS")" "clash_api get_proxies" \
-    "the child kept asking podkop after apply had returned"
-echo "     apply returned in ${elapsed}s, the restore finished ~${waited}s later"
+assert_eq "0" "$?" "a second apply is not blocked by the first"
+assert_contains "$out" "no changes" "and nothing is left holding the lock"
+echo "     apply returned in ${elapsed}s with the clash api down"
 
 test_summary

@@ -66,7 +66,8 @@ Without `--purge` the settings are kept on purpose, the same way opkg keeps a mo
    spread over several sections can be more than sing-box will start with.
 4. **podkop sections.** Choose which sections this subscription fills.
 5. **Configuration type.** Selector or URLTest, per section.
-6. **Save & Apply.** The links are written into podkop and podkop is restarted.
+6. **Save & Apply.** The links are written into podkop and podkop is restarted. A restart puts
+   every section on its first node, so pick the one you want in podkop's own dashboard afterwards.
 
 Start with a section you do not depend on. If anything goes wrong, clearing the subscription's
 sections and saving puts that section back as it was.
@@ -95,6 +96,10 @@ at, not a random one. A URLTest section chooses for itself, so there it tests th
 Every step is written to the debug log with the node's name, and the page shows a notice while a
 section is running on anything other than your own choice. A subscription is re-downloaded only in
 step 4, or when you press Refresh or Update now — a working setup is never touched.
+
+All of this is what happens with no one watching. The moment you step in — Save & Apply, Update now,
+or moving the selector in podkop's dashboard — whatever you leave behind is the truth: the plugin
+drops what it had remembered and starts again from the node your traffic runs on.
 
 Two honest limits. The reachability check in step 5 opens a TCP connection and no more: it proves
 the server is up, not that the tunnel will carry traffic. And nodes on UDP (`hy2`, `hysteria2`)
