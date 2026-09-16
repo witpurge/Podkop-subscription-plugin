@@ -29,6 +29,7 @@ done
 # the stage-1 tests leave mocks and loose copies behind; this one starts from an unowned-file-free /
 rm -f /usr/bin/podkop /etc/init.d/podkop /etc/config/podkop
 rm -f /usr/bin/podkop-sub /etc/init.d/podkop-sub /etc/config/podkop-sub
+rm -rf /usr/share/podkop-sub/lib
 rm -rf /etc/podkop-sub
 mkdir -p /var/lock "$DL"
 
@@ -87,6 +88,10 @@ assert_cmd "the page is installed" test -f /www/luci-static/resources/view/podko
 assert_cmd "the menu entry is installed" test -f /usr/share/luci/menu.d/luci-app-podkop-sub.json
 assert_cmd "the ACL is installed" test -f /usr/share/rpcd/acl.d/luci-app-podkop-sub.json
 assert_cmd "the script is installed and executable" test -x /usr/bin/podkop-sub
+modules=$(find luci-app-podkop-sub/root/usr/share/podkop-sub/lib -name '*.sh' | wc -l | tr -d ' ')
+assert_eq "$modules" \
+    "$(find /usr/share/podkop-sub/lib -name '*.sh' 2> /dev/null | wc -l | tr -d ' ')" \
+    "every module the repo ships is installed with the entry point"
 assert_cmd "the init script is installed and executable" test -x /etc/init.d/podkop-sub
 assert_cmd "the default config is installed" test -f /etc/config/podkop-sub
 version=$(cat /usr/share/podkop-sub/version 2> /dev/null)
@@ -121,6 +126,7 @@ assert_cmd "the page is gone" test ! -e /www/luci-static/resources/view/podkop-s
 assert_cmd "the menu entry is gone" test ! -e /usr/share/luci/menu.d/luci-app-podkop-sub.json
 assert_cmd "the ACL is gone" test ! -e /usr/share/rpcd/acl.d/luci-app-podkop-sub.json
 assert_cmd "the script is gone" test ! -e /usr/bin/podkop-sub
+assert_cmd "the modules go with it, directory and all" test ! -e /usr/share/podkop-sub/lib
 assert_cmd "the init script is gone" test ! -e /etc/init.d/podkop-sub
 assert_cmd "the empty view directory is gone too" test ! -e /www/luci-static/resources/view/podkop-sub
 assert_cmd "the config survives a plain removal" test -f /etc/config/podkop-sub

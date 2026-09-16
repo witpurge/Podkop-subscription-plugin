@@ -1,13 +1,11 @@
 #!/bin/sh
 # shellcheck shell=dash
-# L1: the pure parser functions, sourced straight out of the router script.
+# L1: the pure parser functions, sourced straight out of the link module.
 set -u
 . tests/lib.sh
 
-PODKOP_SUB_TEST=1
-export PODKOP_SUB_TEST
-# shellcheck source=luci-app-podkop-sub/root/usr/bin/podkop-sub
-. luci-app-podkop-sub/root/usr/bin/podkop-sub
+# shellcheck source=luci-app-podkop-sub/root/usr/share/podkop-sub/lib/link.sh
+. luci-app-podkop-sub/root/usr/share/podkop-sub/lib/link.sh
 
 # --- sub_id
 

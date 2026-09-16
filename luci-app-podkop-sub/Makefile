@@ -45,7 +45,8 @@ endef
 define Package/$(PKG_NAME)/postrm
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] && exit 0
-rmdir /usr/share/podkop-sub /www/luci-static/resources/view/podkop-sub 2>/dev/null
+rmdir /usr/share/podkop-sub/lib /usr/share/podkop-sub \
+	/www/luci-static/resources/view/podkop-sub 2>/dev/null
 exit 0
 endef
 

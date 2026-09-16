@@ -33,7 +33,7 @@ reset() { # [<selector position>]
     rm -rf /etc/podkop-sub
     rm -f "$LOG"
     cp -r "$ROOT"/tests/mock/. /
-    cp "$ROOT/luci-app-podkop-sub/root/usr/bin/podkop-sub" /usr/bin/podkop-sub
+    install_core
     cp "$ROOT/luci-app-podkop-sub/root/etc/init.d/podkop-sub" /etc/init.d/podkop-sub
     chmod +x /usr/bin/podkop-sub /usr/bin/podkop /usr/bin/curl \
         /etc/init.d/podkop /etc/init.d/podkop-sub

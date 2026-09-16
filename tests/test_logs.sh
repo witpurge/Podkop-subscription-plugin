@@ -21,7 +21,7 @@ reset() {
     rm -rf /etc/podkop-sub
     rm -f "$LOGFILE"
     cp -r "$ROOT"/tests/mock/. /
-    cp "$ROOT/luci-app-podkop-sub/root/usr/bin/podkop-sub" /usr/bin/podkop-sub
+    install_core
     chmod +x /usr/bin/podkop-sub /usr/bin/podkop /usr/bin/curl /etc/init.d/podkop
     echo '{"proxies":{"main-out":{"now":"main-1-out"},"media-out":{}}}' > "$MOCK_PROXIES"
     unset MOCK_HTTP_CODE MOCK_BODY_plain MOCK_BODY_alt MOCK_PODKOP_DOWN
@@ -108,15 +108,15 @@ assert_eq "2" "$n" "both fixture URLs were checked"
 # ---------------------------------------------------------------- masking addresses
 
 # a node with no #fragment is named after its endpoint, and that endpoint is the VPN server
-# shellcheck source=/dev/null # sourced at run time from the copy the test installed
-mask() { PODKOP_SUB_TEST=1 . /usr/bin/podkop-sub; mask_host "$1"; }
+# shellcheck source=/dev/null # mask_host and safe_name live in the link module
+mask() { . luci-app-podkop-sub/root/usr/share/podkop-sub/lib/link.sh; mask_host "$1"; }
 assert_eq "92.x.x.206:443" "$(mask 92.5.7.206:443)" "an IPv4 keeps its first and last octet"
 assert_eq "2001:x:1" "$(mask 2001:db8::1)" "an IPv6 keeps its first and last group"
 assert_eq "panel.x.net:2096" "$(mask panel.example.net:2096)" "a name keeps its first and last label"
 assert_eq "example.net" "$(mask example.net)" "two labels have no middle to hide"
 
 # shellcheck source=/dev/null # same
-name() { PODKOP_SUB_TEST=1 . /usr/bin/podkop-sub; safe_name "$1"; }
+name() { . luci-app-podkop-sub/root/usr/share/podkop-sub/lib/link.sh; safe_name "$1"; }
 assert_eq "Tokyo 02" "$(name "Tokyo 02")" "a provider's label goes to the log untouched"
 assert_eq "92.x.x.206:443" "$(name 92.5.7.206:443)" "a name that is only an address is masked"
 

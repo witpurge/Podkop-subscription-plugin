@@ -17,7 +17,7 @@ reset() {
     uci -q revert podkop
     rm -rf /etc/podkop-sub
     cp -r "$ROOT"/tests/mock/. /
-    cp "$ROOT/luci-app-podkop-sub/root/usr/bin/podkop-sub" /usr/bin/podkop-sub
+    install_core
     chmod +x /usr/bin/podkop-sub /usr/bin/podkop /usr/bin/curl /etc/init.d/podkop
     echo '{"proxies":{"main-out":{"now":"main-1-out"},"media-out":{"now":"media-urltest-out"}}}' \
         > "$MOCK_PROXIES"

@@ -52,6 +52,13 @@ assert_cmd() {
     fi
 }
 
+# the shipped script is a thin entry point over /usr/share/podkop-sub/lib: install both halves
+install_core() {
+    cp "$ROOT/luci-app-podkop-sub/root/usr/bin/podkop-sub" /usr/bin/podkop-sub
+    mkdir -p /usr/share/podkop-sub/lib
+    cp "$ROOT"/luci-app-podkop-sub/root/usr/share/podkop-sub/lib/*.sh /usr/share/podkop-sub/lib/
+}
+
 test_summary() {
     echo "-- $((TESTS_RUN - TESTS_FAILED))/$TESTS_RUN passed"
     [ "$TESTS_FAILED" -eq 0 ]

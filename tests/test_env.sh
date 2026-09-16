@@ -40,4 +40,10 @@ assert_eq "ok" "$(printf '{"a":"ok"}' | jq -r .a)" "jq reads json"
 assert_eq "9dd4e461268c8034f5c8564e155c67a6" "$(printf 'x' | md5sum | cut -d' ' -f1)" \
     "md5sum of stdin matches known value"
 
+# busybox ash has no namespaces: the same name in two modules wins silently, with no diagnostic
+dups=$(grep -hoE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' \
+    luci-app-podkop-sub/root/usr/share/podkop-sub/lib/*.sh \
+    luci-app-podkop-sub/root/usr/bin/podkop-sub | sort | uniq -d)
+assert_eq "" "$dups" "no function name is defined in two modules"
+
 test_summary
