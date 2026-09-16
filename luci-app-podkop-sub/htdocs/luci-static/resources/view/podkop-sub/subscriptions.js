@@ -93,7 +93,14 @@ function showLogModal() {
     const body = E("pre", { style: LOG_STYLE }, (res.stdout || "").trim() || empty);
     ui.showModal(_("Debug log"), [
       body,
+      // LuCI's Esc clicks the first button in .right, so Close has to be the first one
       E("div", { class: "right" }, [
+        E(
+          "button",
+          { class: "cbi-button cbi-button-neutral", click: ui.hideModal },
+          _("Close"),
+        ),
+        " ",
         E(
           "button",
           {
@@ -105,12 +112,6 @@ function showLogModal() {
             ),
           },
           _("Clear log"),
-        ),
-        " ",
-        E(
-          "button",
-          { class: "cbi-button cbi-button-neutral", click: ui.hideModal },
-          _("Close"),
         ),
       ]),
     ]);
