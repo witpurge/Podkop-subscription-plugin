@@ -52,9 +52,12 @@ for f in $PODKOP_PKGS; do
     cp "$CACHE/$f" "$DL/$f"
 done
 
+# a stale index fails sing-box on its checksum and takes luci-app-podkop's install with it
 if [ "$EXT" = apk ]; then
+    apk update > /dev/null 2>&1
     apk add --allow-untrusted "$DL"/* > /tmp/podkop-install.log 2>&1
 else
+    opkg update > /dev/null 2>&1
     opkg install --force-depends "$DL"/* > /tmp/podkop-install.log 2>&1
 fi
 [ -x /usr/bin/podkop ] || {
